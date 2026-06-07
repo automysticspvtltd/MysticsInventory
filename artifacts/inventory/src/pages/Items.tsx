@@ -1,0 +1,2124 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation } from "wouter";
+import { PageHeader } from "@/components/PageHeader";
+import { useFocusParam, useNewParam } from "@/hooks/use-focus-param";
+import {
+  useListItems,
+  useListWarehouses,
+  useCreateItem,
+  useUpdateItem,
+  useDeleteItem,
+  getListItemsQueryKey,
+  getItem,
+  lookupItemByCode,
+} from "@/lib/queryKeys";
+import {
+  Select,
+  SelectContent,
+  SelectItem as SelectItemUI,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { BarcodeScannerDialog } from "@/components/BarcodeScannerDialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { formatCurrency } from "@/lib/format";
+import {
+  Plus,
+  Search,
+  MoreHorizontal,
+  Edit,
+  Trash2,
+  ChevronRight,
+  ChevronDown,
+  Upload,
+  ScanLine,
+  Store,
+  SlidersHorizontal,
+  ChevronLeft,
+  X,
+} from "lucide-react";
+import { BulkImportItemsDialog } from "@/components/BulkImportItemsDialog";
+import { CreatableCombobox } from "@/components/CreatableCombobox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Badge } from "@/components/ui/badge";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { Checkbox } from "@/components/ui/checkbox";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import * as z from "zod";
+import { useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { useDebounce } from "@/hooks/use-debounce";
+import { Item, useGetMe } from "@/lib/queryKeys";
+import { normalizeRole } from "@/lib/permissions";
+import { ImageUploader } from "@/components/ImageUploader";
+import { useImageSrc } from "@/hooks/use-image-src";
+import { ReportExportButton, type ExportColumn } from "@/components/ReportExportButton";
+import { BulkEditItemsDialog } from "@/components/BulkEditItemsDialog";
+
+const COMMON_UNITS = [
+  "pcs",
+  "box",
+  "pack",
+  "set",
+  "pair",
+  "dozen",
+  "kg",
+  "g",
+  "mg",
+  "lb",
+  "l",
+  "ml",
+  "m",
+  "cm",
+  "mm",
+  "ft",
+  "in",
+  "sqft",
+  "sqm",
+  "roll",
+  "bottle",
+  "can",
+  "bag",
+  "carton",
+  "unit",
+];
+
+const componentRowSchema = z.object({
+  componentItemId: z.coerce.number().int().min(1),
+  quantityPerBundle: z.coerce.number().positive(),
+});
+
+const itemSchema = z
+  .object({
+    sku: z.string().min(1, "SKU is required"),
+    name: z.string().min(1, "Name is required"),
+    description: z.string().optional(),
+    category: z.string().optional(),
+    unit: z.string().min(1, "Unit is required"),
+    salePrice: z.coerce.number().min(0),
+    purchasePrice: z.coerce.number().min(0),
+    hsnCode: z.string().optional(),
+    barcode: z
+      .string()
+      .max(64, "Barcode must be 64 characters or fewer")
+      .optional(),
+    taxRate: z.coerce.number().min(0).max(100),
+    reorderLevel: z.coerce.number().min(0),
+    openingStock: z.coerce.number().min(0).optional(),
+    imageUrl: z
+      .string()
+      .max(2048, "Image URL is too long")
+      .optional()
+      .or(z.literal("")),
+    hasVariants: z.boolean().default(false),
+    axes: z.string().optional(),
+    isBundle: z.boolean().default(false),
+    components: z.array(componentRowSchema).default([]),
+    trackBatches: z.boolean().default(false),
+    allowBackorder: z.boolean().default(false),
+    maxDiscountPercent: z.coerce.number().min(0).max(100).optional().nullable(),
+  })
+  .refine(
+    (v) => {
+      if (!v.hasVariants) return true;
+      const list = (v.axes ?? "")
+        .split(",")
+        .map((a) => a.trim())
+        .filter(Boolean);
+      return list.length >= 1 && list.length <= 3;
+    },
+    {
+      path: ["axes"],
+      message:
+        "Provide 1-3 comma-separated axis names (e.g. Size, Color)",
+    },
+  )
+  .refine((v) => !(v.isBundle && v.hasVariants), {
+    path: ["isBundle"],
+    message: "An item cannot be both a bundle and a variant parent",
+  })
+  .refine(
+    (v) => {
+      if (!v.isBundle) return true;
+      if (v.components.length === 0) return false;
+      const ids = v.components.map((c) => c.componentItemId);
+      return new Set(ids).size === ids.length;
+    },
+    {
+      path: ["components"],
+      message:
+        "A bundle needs at least one component and component items cannot repeat",
+    },
+  )
+  .refine((v) => v.salePrice >= v.purchasePrice, {
+    path: ["salePrice"],
+    message:
+      "Sale price cannot be less than purchase price (would sell at a loss)",
+  });
+
+type ItemFormValues = z.infer<typeof itemSchema>;
+
+/**
+ * Read variantOptions for a parent into a "Size, Color" axis string for
+ * display in the form.
+ */
+function axesString(opts: Item["variantOptions"]): string {
+  if (!opts || typeof opts !== "object") return "";
+  const axes = (opts as { axes?: unknown }).axes;
+  if (!Array.isArray(axes)) return "";
+  return axes.filter((a) => typeof a === "string").join(", ");
+}
+
+/**
+ * Render the option values of a variant ({Size: "M", Color: "Red"}) as
+ * a compact "M / Red" label.
+ */
+/**
+ * Compact 40x40 thumbnail for an item row. Falls back to a neutral
+ * placeholder when no image is set or the URL is blank.
+ */
+function ItemThumb({ url, alt }: { url: string | null | undefined; alt: string }) {
+  const { src } = useImageSrc(url);
+  if (!src) {
+    return (
+      <div
+        className="h-10 w-10 rounded-md border bg-muted/30"
+        aria-hidden
+      />
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={alt}
+      loading="lazy"
+      className="h-10 w-10 rounded-md border object-cover"
+    />
+  );
+}
+
+function variantLabel(opts: Item["variantOptions"]): string {
+  if (!opts || typeof opts !== "object") return "";
+  const entries = Object.entries(opts as Record<string, unknown>).filter(
+    ([k]) => k !== "axes",
+  );
+  return entries
+    .map(([, v]) => (typeof v === "string" ? v : ""))
+    .filter(Boolean)
+    .join(" / ");
+}
+
+const WAREHOUSE_FILTER_KEY = "items.warehouseFilter";
+
+/**
+ * Render the Warehouse cell for an item row. When a specific warehouse
+ * is picked the cell just shows that warehouse's name; under the "all
+ * warehouses" view it shows the warehouse holding the most stock plus
+ * a "+N more" badge with a hover breakdown when stock is split. Items
+ * with zero stock everywhere render as "—".
+ */
+function WarehouseCell({
+  item,
+  scopedWarehouseName,
+  testId,
+}: {
+  item: Item;
+  scopedWarehouseName: string | null;
+  testId: string;
+}) {
+  if (scopedWarehouseName) {
+    return (
+      <span data-testid={testId} className="text-sm">
+        {scopedWarehouseName}
+      </span>
+    );
+  }
+  const breakdown = (item.warehouseStock ?? []).filter((w) => w.quantity > 0);
+  if (breakdown.length === 0) {
+    return (
+      <span data-testid={testId} className="text-muted-foreground">
+        —
+      </span>
+    );
+  }
+  // Sort by quantity desc so the warehouse with the most stock wins.
+  // Tie-break by warehouseName so the result is deterministic when two
+  // warehouses hold the same quantity (otherwise the API row order would
+  // leak into the UI and the "top" cell could flip on every refresh).
+  const sorted = [...breakdown].sort(
+    (a, b) =>
+      b.quantity - a.quantity ||
+      a.warehouseName.localeCompare(b.warehouseName),
+  );
+  const top = sorted[0];
+  const others = sorted.slice(1);
+  return (
+    <div className="flex items-center gap-1.5" data-testid={testId}>
+      <span className="text-sm">
+        {top.warehouseName}
+        <span className="ml-1 text-xs text-muted-foreground font-mono">
+          ({top.quantity} {item.unit})
+        </span>
+      </span>
+      {others.length > 0 && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Badge
+              variant="outline"
+              className="cursor-default font-normal"
+              data-testid={`${testId}-more`}
+            >
+              +{others.length} more
+            </Badge>
+          </TooltipTrigger>
+          <TooltipContent side="top" align="start">
+            <div className="space-y-1 text-xs">
+              {sorted.map((w) => (
+                <div
+                  key={w.warehouseId}
+                  className="flex items-center justify-between gap-3"
+                >
+                  <span>{w.warehouseName}</span>
+                  <span className="font-mono">
+                    {w.quantity} {item.unit}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </TooltipContent>
+        </Tooltip>
+      )}
+    </div>
+  );
+}
+
+export default function Items() {
+  const { data: me } = useGetMe();
+  const canEditStocksForUser =
+    (me?.user?.isSuperAdmin ?? false) ||
+    (["owner", "admin", "manager"] as const).some((r) => r === normalizeRole(me?.role)) ||
+    (me?.canEditStocks ?? false);
+
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(search, 500);
+  // Warehouse picker — defaults to "all warehouses" but the last
+  // selection is remembered across navigation via localStorage so a
+  // multi-warehouse user doesn't have to re-pick on every visit.
+  const [warehouseFilter, setWarehouseFilterState] = useState<number | "all">(
+    () => {
+      if (typeof window === "undefined") return "all";
+      const raw = window.localStorage.getItem(WAREHOUSE_FILTER_KEY);
+      if (!raw || raw === "all") return "all";
+      const n = Number(raw);
+      return Number.isFinite(n) && Number.isInteger(n) && n > 0 ? n : "all";
+    },
+  );
+  const setWarehouseFilter = (v: number | "all") => {
+    setWarehouseFilterState(v);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        WAREHOUSE_FILTER_KEY,
+        v === "all" ? "all" : String(v),
+      );
+    }
+  };
+  const { data: warehouses } = useListWarehouses();
+  const visibleWarehouses = useMemo(
+    () => (warehouses ?? []).filter((w) => !w.isVirtual),
+    [warehouses],
+  );
+  // If the saved warehouseId no longer exists (deleted, or hidden),
+  // silently fall back to "all" instead of sending an invalid filter.
+  useEffect(() => {
+    if (warehouseFilter === "all" || !warehouses) return;
+    if (!visibleWarehouses.some((w) => w.id === warehouseFilter)) {
+      setWarehouseFilter("all");
+    }
+  }, [warehouseFilter, warehouses, visibleWarehouses]);
+  // Fetch every row (parents + variants) in a single query so we can
+  // group them client-side without a per-row fetch.
+  const { data: items, isLoading } = useListItems({
+    search: debouncedSearch || undefined,
+    includeWarehouseBreakdown: true,
+    ...(warehouseFilter !== "all" ? { warehouseId: warehouseFilter } : {}),
+  });
+  const scopedWarehouseName =
+    warehouseFilter === "all"
+      ? null
+      : visibleWarehouses.find((w) => w.id === warehouseFilter)?.name ?? null;
+  // Build dropdown sources for category + unit fields. Categories are
+  // pulled from existing items so each org sees its own list, and the
+  // unit list seeds the common UoMs plus any custom unit already in
+  // use so existing data stays selectable.
+  const { data: allItemsForOptions } = useListItems({});
+  const categoryOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const i of allItemsForOptions ?? []) {
+      if (i.category) set.add(i.category);
+    }
+    return Array.from(set);
+  }, [allItemsForOptions]);
+  const unitOptions = useMemo(() => {
+    const set = new Set<string>(COMMON_UNITS);
+    for (const i of allItemsForOptions ?? []) {
+      if (i.unit) set.add(i.unit);
+    }
+    return Array.from(set);
+  }, [allItemsForOptions]);
+
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<Item | null>(null);
+  const [deleteDialogItem, setDeleteDialogItem] = useState<Item | null>(null);
+  const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState<string>("");
+  const [stockFilter, setStockFilter] = useState<"all" | "in-stock" | "low-stock" | "out-of-stock">("all");
+  const [itemTypeFilter, setItemTypeFilter] = useState<"all" | "regular" | "bundle" | "has-variants">("all");
+  const [priceMin, setPriceMin] = useState<string>("");
+  const [priceMax, setPriceMax] = useState<string>("");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const ITEMS_PER_PAGE = 15;
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  // The same scanner dialog is reused from two callsites: the search
+  // bar (look up + navigate to the matched item) and the create/edit
+  // form barcode field (write the scanned code into the form). Track
+  // which one opened it so onDetected knows what to do.
+  const [scannerMode, setScannerMode] = useState<
+    "search" | "formBarcode" | null
+  >(null);
+  const scannerOpen = scannerMode !== null;
+
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [, navigate] = useLocation();
+
+  // Group: parents (no parentItemId) plus their variants. Variants
+  // whose parent isn't in the result set (because of a search hit on
+  // the variant alone) are rendered as orphan top-level rows so the
+  // user can still see/edit them.
+  const grouped = useMemo(() => {
+    const all = items ?? [];
+    const byParent = new Map<number, Item[]>();
+    const topLevel: Item[] = [];
+    const ids = new Set(all.map((i) => i.id));
+    for (const it of all) {
+      if (it.parentItemId && ids.has(it.parentItemId)) {
+        if (!byParent.has(it.parentItemId)) byParent.set(it.parentItemId, []);
+        byParent.get(it.parentItemId)!.push(it);
+      } else {
+        topLevel.push(it);
+      }
+    }
+    return { topLevel, byParent };
+  }, [items]);
+
+  const filteredTopLevel = useMemo(() => {
+    let result = grouped.topLevel;
+    if (categoryFilter) result = result.filter((i) => i.category === categoryFilter);
+    if (stockFilter === "in-stock") result = result.filter((i) => (i.totalStock ?? 0) > 0);
+    if (stockFilter === "low-stock") result = result.filter((i) => {
+      const s = i.totalStock ?? 0;
+      const r = i.reorderLevel ?? 0;
+      return s > 0 && r > 0 && s <= r;
+    });
+    if (stockFilter === "out-of-stock") result = result.filter((i) => (i.totalStock ?? 0) <= 0);
+    if (itemTypeFilter === "regular") result = result.filter((i) => !i.isBundle && !i.hasVariants);
+    if (itemTypeFilter === "bundle") result = result.filter((i) => i.isBundle);
+    if (itemTypeFilter === "has-variants") result = result.filter((i) => i.hasVariants);
+    if (priceMin !== "") result = result.filter((i) => (i.salePrice ?? 0) >= Number(priceMin));
+    if (priceMax !== "") result = result.filter((i) => (i.salePrice ?? 0) <= Number(priceMax));
+    return result;
+  }, [grouped.topLevel, categoryFilter, stockFilter, itemTypeFilter, priceMin, priceMax]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredTopLevel.length / ITEMS_PER_PAGE));
+  const pagedTopLevel = filteredTopLevel.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
+
+  useEffect(() => {
+    setPage(1);
+    setSelectedIds(new Set());
+  }, [categoryFilter, stockFilter, itemTypeFilter, priceMin, priceMax, debouncedSearch, warehouseFilter]);
+
+  const hasAdvancedFilters = stockFilter !== "all" || itemTypeFilter !== "all" || priceMin !== "" || priceMax !== "";
+  function clearAdvancedFilters() {
+    setStockFilter("all");
+    setItemTypeFilter("all");
+    setPriceMin("");
+    setPriceMax("");
+  }
+
+  const exportColumns = useMemo(
+    (): ExportColumn<Item>[] => [
+      { header: "SKU", accessor: (r) => r.sku },
+      { header: "Barcode", accessor: (r) => r.barcode ?? "" },
+      { header: "Name", accessor: (r) => r.name },
+      { header: "Category", accessor: (r) => r.category ?? "" },
+      { header: "Unit", accessor: (r) => r.unit },
+      { header: "Sale Price", accessor: (r) => r.salePrice },
+      { header: "Tax Rate %", accessor: (r) => r.taxRate },
+      { header: "Min Stock Level", accessor: (r) => r.reorderLevel },
+      { header: "Total Stock", accessor: (r) => r.totalStock },
+    ],
+    [],
+  );
+
+  const exportRows = useMemo(() => {
+    if (selectedIds.size > 0) {
+      return filteredTopLevel.filter((i) => selectedIds.has(i.id));
+    }
+    return filteredTopLevel;
+  }, [filteredTopLevel, selectedIds]);
+
+  const createMutation = useCreateItem({
+    mutation: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getListItemsQueryKey() });
+        setSheetOpen(false);
+        toast({ title: "Item created successfully" });
+      },
+    },
+  });
+
+  const updateMutation = useUpdateItem({
+    mutation: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getListItemsQueryKey() });
+        setSheetOpen(false);
+        toast({ title: "Item updated successfully" });
+      },
+    },
+  });
+
+  const deleteMutation = useDeleteItem({
+    mutation: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getListItemsQueryKey() });
+        setDeleteDialogItem(null);
+        toast({ title: "Item deleted successfully" });
+      },
+      onError: (err: unknown) => {
+        const e = err as { message?: string };
+        toast({
+          variant: "destructive",
+          title: "Could not delete item",
+          description: e.message ?? "Unknown error",
+        });
+      },
+    },
+  });
+
+  const form = useForm<ItemFormValues>({
+    resolver: zodResolver(itemSchema),
+    defaultValues: {
+      sku: "",
+      name: "",
+      description: "",
+      category: "",
+      unit: "pcs",
+      salePrice: 0,
+      purchasePrice: 0,
+      hsnCode: "",
+      barcode: "",
+      taxRate: 0,
+      reorderLevel: 0,
+      openingStock: 0,
+      imageUrl: "",
+      hasVariants: false,
+      axes: "",
+      isBundle: false,
+      components: [],
+      trackBatches: false,
+      allowBackorder: false,
+      maxDiscountPercent: null,
+    },
+  });
+  const watchHasVariants = form.watch("hasVariants");
+  const watchIsBundle = form.watch("isBundle");
+  const watchSalePrice = form.watch("salePrice");
+  const watchMaxDiscountPercent = form.watch("maxDiscountPercent");
+  const [maxDiscountRsStr, setMaxDiscountRsStr] = useState<string>("");
+  const discountChangedByRs = useRef(false);
+  const watchComponents = form.watch("components");
+  const watchTrackBatches = form.watch("trackBatches");
+  const watchSku = form.watch("sku");
+  const watchCategory = form.watch("category");
+
+  // Ref tracks the last auto-computed barcode so we can detect user overrides.
+  const lastAutoBarcodeRef = useRef<string>("");
+
+  // Sync ₹ field when % or sale price changes (but not when ₹ itself was just typed).
+  useEffect(() => {
+    if (discountChangedByRs.current) {
+      discountChangedByRs.current = false;
+      return;
+    }
+    const pct = watchMaxDiscountPercent;
+    const price = Number(watchSalePrice);
+    if (pct != null && price > 0) {
+      setMaxDiscountRsStr(((pct / 100) * price).toFixed(2));
+    } else if (pct == null) {
+      setMaxDiscountRsStr("");
+    }
+  }, [watchMaxDiscountPercent, watchSalePrice]);
+
+  // Auto-generate the barcode field from SKU + category when creating a new item.
+  // Only updates if the barcode is empty or still matches the last auto-value
+  // (i.e. the user hasn't manually overridden it).
+  useEffect(() => {
+    if (editingItem) return;
+    const slug = (s: string) =>
+      s.trim().toUpperCase().replace(/[^A-Z0-9]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+    const sku = slug(watchSku ?? "");
+    const cat = slug(watchCategory ?? "");
+    const generated = (cat ? `${cat}-${sku}` : sku).slice(0, 64);
+    const current = form.getValues("barcode") ?? "";
+    if (current === "" || current === lastAutoBarcodeRef.current) {
+      form.setValue("barcode", generated, { shouldDirty: false, shouldValidate: false });
+      lastAutoBarcodeRef.current = generated;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchSku, watchCategory, editingItem]);
+
+  // Items eligible to be picked as bundle components: any saved leaf
+  // item that is not itself a parent and not itself a bundle.
+  const componentCandidates = useMemo(() => {
+    return (items ?? []).filter(
+      (i) => !i.hasVariants && !i.isBundle,
+    );
+  }, [items]);
+
+  const handleEdit = async (item: Item) => {
+    setEditingItem(item);
+    // For bundles, fetch the detail so we can pre-fill the components
+    // editor. For everything else the list row already has every field
+    // we render in the form.
+    let existingComponents: ItemFormValues["components"] = [];
+    if (item.isBundle) {
+      try {
+        const detail = await getItem(item.id);
+        existingComponents = (detail.components ?? []).map((c) => ({
+          componentItemId: c.componentItemId,
+          quantityPerBundle: c.quantityPerBundle,
+        }));
+      } catch {
+        // If the fetch fails, fall back to an empty editor — the user
+        // will see the validation error and can re-pick components.
+      }
+    }
+    form.reset({
+      sku: item.sku,
+      name: item.name,
+      description: item.description || "",
+      category: item.category || "",
+      unit: item.unit,
+      salePrice: item.salePrice,
+      purchasePrice: item.purchasePrice,
+      hsnCode: item.hsnCode || "",
+      barcode: item.barcode || "",
+      taxRate: item.taxRate,
+      reorderLevel: item.reorderLevel,
+      openingStock: 0, // Cannot update opening stock
+      imageUrl: item.imageUrl ?? "",
+      hasVariants: !!item.hasVariants,
+      axes: axesString(item.variantOptions),
+      isBundle: !!item.isBundle,
+      components: existingComponents,
+      trackBatches: !!item.trackBatches,
+      allowBackorder: !!(item as { allowBackorder?: boolean }).allowBackorder,
+      maxDiscountPercent: (item as { maxDiscountPercent?: number | null }).maxDiscountPercent ?? null,
+    });
+    setSheetOpen(true);
+  };
+
+  const handleCreate = () => {
+    setEditingItem(null);
+    form.reset({
+      sku: "",
+      name: "",
+      description: "",
+      category: "",
+      unit: "pcs",
+      salePrice: 0,
+      purchasePrice: 0,
+      hsnCode: "",
+      barcode: "",
+      taxRate: 18,
+      reorderLevel: 5,
+      openingStock: 0,
+      imageUrl: "",
+      hasVariants: false,
+      axes: "",
+      isBundle: false,
+      components: [],
+      trackBatches: false,
+      allowBackorder: false,
+      maxDiscountPercent: null,
+    });
+    setSheetOpen(true);
+  };
+
+  // Auto-open the create sheet when arriving via the command palette
+  // with ?new=1.
+  const { shouldOpenNew, clear: clearNew } = useNewParam();
+  const newHandledRef = useRef(false);
+  useEffect(() => {
+    if (!shouldOpenNew) {
+      newHandledRef.current = false;
+      return;
+    }
+    if (newHandledRef.current) return;
+    newHandledRef.current = true;
+    handleCreate();
+    clearNew();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shouldOpenNew]);
+
+  // Auto-open the edit sheet when arriving via the e-invoice
+  // "What to fix" panel with ?focus=<id> (or any other deep link).
+  // We only fire once per focus value, then strip the param so a
+  // refresh doesn't re-trigger the side-effect.
+  const { focusId, clear: clearFocus } = useFocusParam();
+  const focusedHandledRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (focusId == null || !items) return;
+    if (focusedHandledRef.current === focusId) return;
+    const target = items.find((i) => i.id === focusId);
+    if (!target) return;
+    focusedHandledRef.current = focusId;
+    void handleEdit(target);
+    clearFocus();
+    // handleEdit/clearFocus are stable for the lifetime of this page;
+    // re-run only when focusId or the loaded list changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId, items]);
+
+  const onSubmit = (data: ItemFormValues) => {
+    const axesList = (data.axes ?? "")
+      .split(",")
+      .map((a) => a.trim())
+      .filter(Boolean);
+    const variantOptions = data.hasVariants ? { axes: axesList } : null;
+    const componentsPayload = data.isBundle
+      ? data.components.map((c) => ({
+          componentItemId: c.componentItemId,
+          quantityPerBundle: c.quantityPerBundle,
+        }))
+      : [];
+    if (editingItem) {
+      const wantsVariants = !!data.hasVariants;
+      const hadVariants = !!editingItem.hasVariants;
+      const transitioningVariants = wantsVariants !== hadVariants;
+      const includeOptions = wantsVariants;
+      const wantsBundle = !!data.isBundle;
+      const wasBundle = !!editingItem.isBundle;
+      const transitioningBundle = wantsBundle !== wasBundle;
+      // We always replace the component list when the row is a bundle
+      // and we have edited rows; clearing the list happens automatically
+      // when the user toggles isBundle off.
+      const includeComponents = wantsBundle;
+      const wantsTrackBatches = !!data.trackBatches;
+      const wasTrackBatches = !!editingItem.trackBatches;
+      const transitioningTrackBatches =
+        wantsTrackBatches !== wasTrackBatches;
+      updateMutation.mutate({
+        id: editingItem.id,
+        data: {
+          sku: data.sku,
+          name: data.name,
+          description: data.description || null,
+          category: data.category || null,
+          unit: data.unit,
+          salePrice: data.salePrice,
+          purchasePrice: data.purchasePrice,
+          hsnCode: data.hsnCode || null,
+          barcode: data.barcode?.trim() ? data.barcode.trim() : null,
+          taxRate: data.taxRate,
+          reorderLevel: data.reorderLevel,
+          imageUrl: data.imageUrl?.trim() ? data.imageUrl.trim() : null,
+          ...(transitioningVariants ? { hasVariants: wantsVariants } : {}),
+          ...(includeOptions ? { variantOptions } : {}),
+          ...(transitioningBundle ? { isBundle: wantsBundle } : {}),
+          ...(includeComponents ? { components: componentsPayload } : {}),
+          ...(transitioningTrackBatches
+            ? { trackBatches: wantsTrackBatches }
+            : {}),
+          allowBackorder: !!data.allowBackorder,
+          maxDiscountPercent: data.maxDiscountPercent ?? null,
+        },
+      });
+    } else {
+      createMutation.mutate({
+        data: {
+          sku: data.sku,
+          name: data.name,
+          description: data.description || null,
+          category: data.category || null,
+          unit: data.unit,
+          salePrice: data.salePrice,
+          purchasePrice: data.purchasePrice,
+          hsnCode: data.hsnCode || null,
+          barcode: data.barcode?.trim() ? data.barcode.trim() : null,
+          taxRate: data.taxRate,
+          reorderLevel: data.reorderLevel,
+          imageUrl: data.imageUrl?.trim() ? data.imageUrl.trim() : null,
+          openingStock:
+            data.hasVariants || data.isBundle ? 0 : data.openingStock || 0,
+          hasVariants: data.hasVariants,
+          variantOptions,
+          ...(data.isBundle
+            ? { isBundle: true, components: componentsPayload }
+            : {}),
+          ...(data.trackBatches ? { trackBatches: true } : {}),
+          ...(data.allowBackorder ? { allowBackorder: true } : {}),
+          maxDiscountPercent: data.maxDiscountPercent ?? null,
+        },
+      });
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Items"
+        description="Manage your product catalog and inventory items."
+        actions={
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setBulkImportOpen(true)}
+              data-testid="btn-bulk-import-items"
+            >
+              <Upload className="mr-2 h-4 w-4" />
+              Bulk import
+            </Button>
+            <Button onClick={handleCreate} data-testid="btn-create-item">
+              <Plus className="mr-2 h-4 w-4" />
+              Add Item
+            </Button>
+          </div>
+        }
+      />
+      <BulkImportItemsDialog
+        open={bulkImportOpen}
+        onOpenChange={setBulkImportOpen}
+      />
+      <BulkEditItemsDialog
+        open={bulkEditOpen}
+        onOpenChange={setBulkEditOpen}
+        selectedIds={Array.from(selectedIds)}
+        categoryOptions={categoryOptions}
+        onSuccess={() => setSelectedIds(new Set())}
+      />
+      <BarcodeScannerDialog
+        open={scannerOpen}
+        onOpenChange={(o) => {
+          if (!o) setScannerMode(null);
+        }}
+        onDetected={async (code) => {
+          const mode = scannerMode;
+          setScannerMode(null);
+          const trimmed = code.trim();
+          if (mode === "formBarcode") {
+            // Populate the form field; never navigate — the user is
+            // mid-edit and would lose unsaved changes otherwise.
+            form.setValue("barcode", trimmed, {
+              shouldDirty: true,
+              shouldValidate: true,
+            });
+            return;
+          }
+          // mode === "search": resolve to an item and jump to it.
+          try {
+            const item = await lookupItemByCode({ code: trimmed });
+            navigate(`/items/${item.id}`);
+          } catch {
+            // No match — drop the code into the search bar so the user
+            // can verify or follow up manually.
+            setSearch(trimmed);
+            toast({
+              title: "No item found",
+              description: `Searched for "${trimmed}". Add it as a new item if needed.`,
+            });
+          }
+        }}
+      />
+
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search items by name or SKU..."
+            className="pl-9"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            data-testid="input-search-items"
+          />
+        </div>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={() => setScannerMode("search")}
+          aria-label="Scan barcode"
+          data-testid="btn-scan-items"
+        >
+          <ScanLine className="h-4 w-4" />
+        </Button>
+        <Select
+          value={categoryFilter || "__all__"}
+          onValueChange={(v) => setCategoryFilter(v === "__all__" ? "" : v)}
+        >
+          <SelectTrigger
+            className="w-44"
+            data-testid="select-items-category"
+          >
+            <SelectValue placeholder="All categories" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItemUI value="__all__">All categories</SelectItemUI>
+            {categoryOptions.map((c) => (
+              <SelectItemUI key={c} value={c}>
+                {c}
+              </SelectItemUI>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button
+          variant={advancedOpen || hasAdvancedFilters ? "secondary" : "outline"}
+          size="sm"
+          onClick={() => setAdvancedOpen((o) => !o)}
+          data-testid="btn-advanced-filter"
+          className="gap-1.5"
+        >
+          <SlidersHorizontal className="h-4 w-4" />
+          Filters
+          {hasAdvancedFilters && (
+            <Badge variant="destructive" className="ml-1 h-4 w-4 rounded-full p-0 flex items-center justify-center text-[10px]">
+              !
+            </Badge>
+          )}
+        </Button>
+        <div className="flex items-center gap-2 ml-auto">
+          {selectedIds.size > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setBulkEditOpen(true)}
+              data-testid="btn-bulk-edit-items"
+            >
+              <Edit className="mr-2 h-4 w-4" />
+              Edit ({selectedIds.size})
+            </Button>
+          )}
+          <ReportExportButton
+            filename="items"
+            title="Items Export"
+            columns={exportColumns}
+            rows={exportRows}
+          />
+          <Store className="h-4 w-4 text-muted-foreground" />
+          <Select
+            value={
+              warehouseFilter === "all" ? "all" : warehouseFilter.toString()
+            }
+            onValueChange={(val) =>
+              setWarehouseFilter(val === "all" ? "all" : parseInt(val, 10))
+            }
+          >
+            <SelectTrigger
+              className="w-48"
+              data-testid="select-items-warehouse"
+            >
+              <SelectValue placeholder="All warehouses" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItemUI value="all">All warehouses</SelectItemUI>
+              {visibleWarehouses.map((w) => (
+                <SelectItemUI key={w.id} value={w.id.toString()}>
+                  {w.name}
+                </SelectItemUI>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {advancedOpen && (
+        <div className="rounded-md border bg-card p-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium">Advanced Filters</p>
+            {hasAdvancedFilters && (
+              <Button variant="ghost" size="sm" onClick={clearAdvancedFilters} className="h-7 gap-1 text-muted-foreground">
+                <X className="h-3 w-3" /> Clear all
+              </Button>
+            )}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">Stock Status</label>
+              <Select value={stockFilter} onValueChange={(v) => setStockFilter(v as typeof stockFilter)}>
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItemUI value="all">All stock</SelectItemUI>
+                  <SelectItemUI value="in-stock">In stock</SelectItemUI>
+                  <SelectItemUI value="low-stock">Low stock</SelectItemUI>
+                  <SelectItemUI value="out-of-stock">Out of stock</SelectItemUI>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">Item Type</label>
+              <Select value={itemTypeFilter} onValueChange={(v) => setItemTypeFilter(v as typeof itemTypeFilter)}>
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItemUI value="all">All types</SelectItemUI>
+                  <SelectItemUI value="regular">Regular</SelectItemUI>
+                  <SelectItemUI value="bundle">Bundle</SelectItemUI>
+                  <SelectItemUI value="has-variants">Has variants</SelectItemUI>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">Min Price (₹)</label>
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                placeholder="0"
+                className="h-8 text-sm"
+                value={priceMin}
+                onChange={(e) => setPriceMin(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">Max Price (₹)</label>
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                placeholder="Any"
+                className="h-8 text-sm"
+                value={priceMax}
+                onChange={(e) => setPriceMax(e.target.value)}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      <TooltipProvider delayDuration={0}>
+      <div className="rounded-md border bg-card">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-[44px] px-2">
+                <Checkbox
+                  checked={
+                    pagedTopLevel.length > 0 &&
+                    pagedTopLevel.every((i) => selectedIds.has(i.id))
+                  }
+                  onCheckedChange={(checked) => {
+                    if (checked) {
+                      setSelectedIds(
+                        new Set(pagedTopLevel.map((i) => i.id)),
+                      );
+                    } else {
+                      setSelectedIds(new Set());
+                    }
+                  }}
+                  aria-label="Select all items"
+                  data-testid="checkbox-select-all-items"
+                />
+              </TableHead>
+              <TableHead className="w-[64px]"></TableHead>
+              <TableHead className="w-[180px]">SKU</TableHead>
+              <TableHead className="w-[160px]">Barcode</TableHead>
+              <TableHead>Name</TableHead>
+              <TableHead>Category</TableHead>
+              <TableHead className="text-right">Price</TableHead>
+              <TableHead>Warehouse</TableHead>
+              <TableHead className="text-right">Stock</TableHead>
+              <TableHead className="w-[50px]"></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {isLoading ? (
+              <TableRow>
+                <TableCell colSpan={10} className="h-24 text-center">
+                  Loading...
+                </TableCell>
+              </TableRow>
+            ) : filteredTopLevel.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={10} className="h-24 text-center">
+                  No items found.
+                </TableCell>
+              </TableRow>
+            ) : (
+              pagedTopLevel.flatMap((parent) => {
+                const isParent = !!parent.hasVariants;
+                const isExpanded = !!expanded[parent.id];
+                const variants = isParent
+                  ? grouped.byParent.get(parent.id) ?? []
+                  : [];
+                const rows: React.ReactNode[] = [
+                  <TableRow
+                    key={parent.id}
+                    data-testid={`row-item-${parent.id}`}
+                  >
+                    <TableCell className="px-2">
+                      <Checkbox
+                        checked={selectedIds.has(parent.id)}
+                        onCheckedChange={(checked) => {
+                          setSelectedIds((prev) => {
+                            const next = new Set(prev);
+                            if (checked) next.add(parent.id);
+                            else next.delete(parent.id);
+                            return next;
+                          });
+                        }}
+                        aria-label={`Select ${parent.name}`}
+                        data-testid={`checkbox-item-${parent.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <ItemThumb url={parent.imageUrl} alt={parent.name} />
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">
+                      <div className="flex items-center gap-1">
+                        {isParent ? (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-5 w-5 -ml-1"
+                            onClick={() =>
+                              setExpanded((m) => ({
+                                ...m,
+                                [parent.id]: !m[parent.id],
+                              }))
+                            }
+                            data-testid={`btn-expand-${parent.id}`}
+                            aria-label={isExpanded ? "Collapse" : "Expand"}
+                          >
+                            {isExpanded ? (
+                              <ChevronDown className="h-4 w-4" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4" />
+                            )}
+                          </Button>
+                        ) : (
+                          <span className="inline-block w-5" />
+                        )}
+                        {parent.sku}
+                      </div>
+                    </TableCell>
+                    <TableCell
+                      className="font-mono text-xs text-muted-foreground"
+                      data-testid={`text-barcode-${parent.id}`}
+                    >
+                      {parent.barcode || "-"}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Link
+                          href={`/items/${parent.id}`}
+                          className="font-medium text-primary hover:underline"
+                          data-testid={`link-item-${parent.id}`}
+                        >
+                          {parent.name}
+                        </Link>
+                        {isParent && (
+                          <Badge variant="outline">
+                            {parent.variantCount} variant
+                            {parent.variantCount === 1 ? "" : "s"}
+                          </Badge>
+                        )}
+                        {parent.isBundle && (
+                          <Badge variant="outline" data-testid={`badge-bundle-${parent.id}`}>
+                            Bundle
+                          </Badge>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>{parent.category || "-"}</TableCell>
+                    <TableCell className="text-right">
+                      {isParent ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        formatCurrency(parent.salePrice)
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {isParent ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        <WarehouseCell
+                          item={parent}
+                          scopedWarehouseName={scopedWarehouseName}
+                          testId={`text-warehouse-${parent.id}`}
+                        />
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {isParent ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        (() => {
+                          const qty =
+                            warehouseFilter === "all"
+                              ? parent.totalStock
+                              : parent.stockAtWarehouse ?? 0;
+                          return (
+                            <Badge
+                              variant={
+                                qty <= parent.reorderLevel
+                                  ? "destructive"
+                                  : "secondary"
+                              }
+                              title={
+                                parent.isBundle
+                                  ? "Derived from component stock"
+                                  : undefined
+                              }
+                              data-testid={`text-stock-${parent.id}`}
+                            >
+                              {qty} {parent.unit}
+                              {parent.isBundle ? " (derived)" : ""}
+                            </Badge>
+                          );
+                        })()
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <DropdownMenu>
+                        {canEditStocksForUser && (
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            className="h-8 w-8 p-0"
+                            data-testid={`btn-item-menu-${parent.id}`}
+                          >
+                            <span className="sr-only">Open menu</span>
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        )}
+                        {canEditStocksForUser && (
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onClick={() => handleEdit(parent)}
+                            data-testid={`btn-edit-item-${parent.id}`}
+                          >
+                            <Edit className="mr-2 h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="text-red-600 focus:text-red-600"
+                            onClick={() => setDeleteDialogItem(parent)}
+                            data-testid={`btn-delete-item-${parent.id}`}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                        )}
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>,
+                ];
+                if (isParent && isExpanded) {
+                  for (const v of variants) {
+                    rows.push(
+                      <TableRow
+                        key={`v-${v.id}`}
+                        className="bg-muted/30"
+                        data-testid={`row-item-${v.id}`}
+                      >
+                        <TableCell className="px-2" />
+                        <TableCell>
+                          <ItemThumb url={v.imageUrl} alt={v.name} />
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">
+                          <div className="flex items-center gap-1 pl-6">
+                            <span className="inline-block w-5" />
+                            {v.sku}
+                          </div>
+                        </TableCell>
+                        <TableCell
+                          className="font-mono text-xs text-muted-foreground"
+                          data-testid={`text-barcode-${v.id}`}
+                        >
+                          {v.barcode || "-"}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Link
+                              href={`/items/${v.id}`}
+                              className="font-medium text-primary hover:underline"
+                              data-testid={`link-item-${v.id}`}
+                            >
+                              {v.name}
+                            </Link>
+                            {variantLabel(v.variantOptions) && (
+                              <Badge variant="secondary" className="font-normal">
+                                {variantLabel(v.variantOptions)}
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>{v.category || "-"}</TableCell>
+                        <TableCell className="text-right">
+                          {formatCurrency(v.salePrice)}
+                        </TableCell>
+                        <TableCell>
+                          <WarehouseCell
+                            item={v}
+                            scopedWarehouseName={scopedWarehouseName}
+                            testId={`text-warehouse-${v.id}`}
+                          />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {(() => {
+                            const qty =
+                              warehouseFilter === "all"
+                                ? v.totalStock
+                                : v.stockAtWarehouse ?? 0;
+                            return (
+                              <Badge
+                                variant={
+                                  qty <= v.reorderLevel
+                                    ? "destructive"
+                                    : "secondary"
+                                }
+                                data-testid={`text-stock-${v.id}`}
+                              >
+                                {qty} {v.unit}
+                              </Badge>
+                            );
+                          })()}
+                        </TableCell>
+                        <TableCell>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                className="h-8 w-8 p-0"
+                                data-testid={`btn-item-menu-${v.id}`}
+                              >
+                                <span className="sr-only">Open menu</span>
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                onClick={() => handleEdit(v)}
+                                data-testid={`btn-edit-item-${v.id}`}
+                              >
+                                <Edit className="mr-2 h-4 w-4" />
+                                Edit
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="text-red-600 focus:text-red-600"
+                                onClick={() => setDeleteDialogItem(v)}
+                                data-testid={`btn-delete-item-${v.id}`}
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>,
+                    );
+                  }
+                }
+                return rows;
+              })
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      {filteredTopLevel.length > 0 && (
+        <div className="flex items-center justify-between px-1">
+          <p className="text-sm text-muted-foreground">
+            Showing {Math.min((page - 1) * ITEMS_PER_PAGE + 1, filteredTopLevel.length)}–{Math.min(page * ITEMS_PER_PAGE, filteredTopLevel.length)} of {filteredTopLevel.length} items
+          </p>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-8 w-8"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              aria-label="Previous page"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <span className="text-sm px-2">
+              {page} / {totalPages}
+            </span>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-8 w-8"
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              aria-label="Next page"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
+      </TooltipProvider>
+
+      <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+        <SheetContent className="sm:max-w-md overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>
+              {editingItem ? "Edit Item" : "Create Item"}
+            </SheetTitle>
+            <SheetDescription>
+              {editingItem
+                ? "Make changes to the item here."
+                : "Add a new item to your inventory."}
+            </SheetDescription>
+          </SheetHeader>
+          <Form {...form}>
+            <form
+              onSubmit={form.handleSubmit(onSubmit)}
+              className="space-y-4 mt-6"
+            >
+              <FormField
+                control={form.control}
+                name="imageUrl"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Product image</FormLabel>
+                    <FormControl>
+                      <ImageUploader
+                        value={field.value ?? ""}
+                        onChange={(next) =>
+                          field.onChange(next ?? "")
+                        }
+                        testId="item-image"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="sku"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>SKU *</FormLabel>
+                      <FormControl>
+                        <Input {...field} data-testid="input-item-sku" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Name *</FormLabel>
+                      <FormControl>
+                        <Input {...field} data-testid="input-item-name" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <FormField
+                control={form.control}
+                name="description"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Description</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        data-testid="input-item-description"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="category"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Category</FormLabel>
+                      <FormControl>
+                        <CreatableCombobox
+                          value={field.value ?? ""}
+                          onChange={field.onChange}
+                          options={categoryOptions}
+                          placeholder="Select or add category…"
+                          searchPlaceholder="Search or add a category…"
+                          emptyMessage="No categories yet."
+                          testId="input-item-category"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="unit"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Unit *</FormLabel>
+                      <FormControl>
+                        <CreatableCombobox
+                          value={field.value ?? ""}
+                          onChange={field.onChange}
+                          options={unitOptions}
+                          placeholder="Select or add unit…"
+                          searchPlaceholder="Search or add a unit…"
+                          emptyMessage="No units found."
+                          testId="input-item-unit"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="salePrice"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Sale Price (₹) *</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          {...field}
+                          data-testid="input-item-saleprice"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="purchasePrice"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Purchase Price (₹) *</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          {...field}
+                          data-testid="input-item-purchaseprice"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="taxRate"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>GST Rate (%) *</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          {...field}
+                          data-testid="input-item-taxrate"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="hsnCode"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>HSN Code</FormLabel>
+                      <FormControl>
+                        <Input
+                          {...field}
+                          data-testid="input-item-hsncode"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <FormField
+                control={form.control}
+                name="barcode"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Barcode</FormLabel>
+                    <FormControl>
+                      <div className="flex gap-2">
+                        <Input
+                          {...field}
+                          placeholder="Scan or type the product barcode"
+                          data-testid="input-item-barcode"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => setScannerMode("formBarcode")}
+                          aria-label="Scan barcode"
+                          data-testid="btn-scan-item-barcode"
+                        >
+                          <ScanLine className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </FormControl>
+                    <FormDescription>
+                      Optional. The scanner matches the barcode first, then
+                      the SKU.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="reorderLevel"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Reorder Level *</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          {...field}
+                          data-testid="input-item-reorderlevel"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                {!editingItem && !watchHasVariants && (
+                  <FormField
+                    control={form.control}
+                    name="openingStock"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Opening Stock</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            {...field}
+                            data-testid="input-item-openingstock"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+              </div>
+
+              {/* Max discount fields */}
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="maxDiscountPercent"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Max Discount %</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step="0.01"
+                          placeholder="No limit"
+                          value={field.value ?? ""}
+                          onChange={(e) => {
+                            const pct = e.target.value === "" ? null : Number(e.target.value);
+                            field.onChange(pct);
+                          }}
+                          data-testid="input-max-discount-percent"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <div className="space-y-2">
+                  <label className="text-sm font-medium leading-none">Max Discount (₹)</label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    placeholder="No limit"
+                    value={maxDiscountRsStr}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setMaxDiscountRsStr(raw);
+                      discountChangedByRs.current = true;
+                      if (raw === "") {
+                        form.setValue("maxDiscountPercent", null, { shouldValidate: true });
+                      } else {
+                        const price = Number(watchSalePrice);
+                        const rs = Number(raw);
+                        if (price > 0) {
+                          const pct = Math.min(100, (rs / price) * 100);
+                          form.setValue("maxDiscountPercent", parseFloat(pct.toFixed(4)), { shouldValidate: true });
+                        }
+                      }
+                    }}
+                    data-testid="input-max-discount-amount"
+                  />
+                </div>
+              </div>
+
+              <div className="border-t pt-4 space-y-3">
+                {(() => {
+                  const isVariant = !!(editingItem && editingItem.parentItemId);
+                  const hasChildren = !!(
+                    editingItem && (editingItem.variantCount ?? 0) > 0
+                  );
+                  const lockHasVariants = !!editingItem && (isVariant || hasChildren);
+                  const lockAxes = !!editingItem && hasChildren;
+                  return (
+                    <>
+                      <FormField
+                        control={form.control}
+                        name="hasVariants"
+                        render={({ field }) => (
+                          <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                            <FormControl>
+                              <Checkbox
+                                checked={field.value}
+                                onCheckedChange={(v) => field.onChange(!!v)}
+                                disabled={lockHasVariants}
+                                data-testid="checkbox-has-variants"
+                              />
+                            </FormControl>
+                            <div className="space-y-1 leading-none">
+                              <FormLabel>This item has variants</FormLabel>
+                              <FormDescription>
+                                Variants are size/colour combinations under
+                                this item. Each variant gets its own SKU,
+                                prices, and stock levels.
+                                {isVariant
+                                  ? " This item is itself a variant of another item, so it can't have its own variants."
+                                  : hasChildren
+                                  ? " Delete the existing variants first to disable this."
+                                  : ""}
+                              </FormDescription>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+                      {watchHasVariants && (
+                        <FormField
+                          control={form.control}
+                          name="axes"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Variant axes</FormLabel>
+                              <FormControl>
+                                <Input
+                                  {...field}
+                                  placeholder="Size, Color"
+                                  disabled={lockAxes}
+                                  data-testid="input-item-axes"
+                                />
+                              </FormControl>
+                              <FormDescription>
+                                Comma-separated list of 1-3 axis names.
+                                Example: "Size, Color".
+                                {lockAxes
+                                  ? " Axes are locked once variants exist."
+                                  : ""}
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+
+              {(() => {
+                // Bundle toggle. Disable if the row is a variant child or
+                // a variant parent — the API rejects either combination.
+                const isVariantChild = !!(
+                  editingItem && editingItem.parentItemId
+                );
+                const isVariantParent = !!(editingItem && editingItem.hasVariants);
+                const lockBundle =
+                  watchHasVariants || isVariantChild || isVariantParent;
+                return (
+                  <div className="border-t pt-4 space-y-3">
+                    <FormField
+                      control={form.control}
+                      name="allowBackorder"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                          <FormControl>
+                            <Checkbox
+                              checked={field.value}
+                              onCheckedChange={(v) => field.onChange(!!v)}
+                              data-testid="checkbox-allow-backorder"
+                            />
+                          </FormControl>
+                          <div className="space-y-1 leading-none">
+                            <FormLabel>Allow backorder (sell with insufficient stock)</FormLabel>
+                            <FormDescription>
+                              When enabled, POS and shipments may sell this item
+                              even if on-hand stock would go negative. Use for
+                              made-to-order items or items you can reliably
+                              restock on short notice.
+                            </FormDescription>
+                            <FormMessage />
+                          </div>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="isBundle"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                          <FormControl>
+                            <Checkbox
+                              checked={field.value}
+                              onCheckedChange={(v) => field.onChange(!!v)}
+                              disabled={lockBundle}
+                              data-testid="checkbox-is-bundle"
+                            />
+                          </FormControl>
+                          <div className="space-y-1 leading-none">
+                            <FormLabel>This item is a bundle</FormLabel>
+                            <FormDescription>
+                              A bundle has its own SKU and price but no
+                              physical stock. Selling one ships the
+                              configured component items instead.
+                              {watchHasVariants
+                                ? " A bundle cannot also be a variant parent."
+                                : isVariantChild
+                                ? " A variant cannot be turned into a bundle."
+                                : ""}
+                            </FormDescription>
+                            <FormMessage />
+                          </div>
+                        </FormItem>
+                      )}
+                    />
+                    {watchIsBundle && (
+                      <FormField
+                        control={form.control}
+                        name="components"
+                        render={() => (
+                          <FormItem>
+                            <FormLabel>Components</FormLabel>
+                            <FormDescription>
+                              Pick the items consumed when one bundle ships.
+                              Quantity is per single bundle.
+                            </FormDescription>
+                            <div className="space-y-2 mt-2">
+                              {watchComponents.map((row, idx) => (
+                                <div
+                                  key={idx}
+                                  className="flex items-center gap-2"
+                                  data-testid={`row-component-${idx}`}
+                                >
+                                  <select
+                                    className="flex-1 h-9 rounded-md border bg-background px-2 text-sm"
+                                    value={row.componentItemId || ""}
+                                    onChange={(e) => {
+                                      const next = [...watchComponents];
+                                      next[idx] = {
+                                        ...next[idx],
+                                        componentItemId: Number(e.target.value),
+                                      };
+                                      form.setValue("components", next, {
+                                        shouldValidate: true,
+                                      });
+                                    }}
+                                    data-testid={`select-component-${idx}`}
+                                  >
+                                    <option value="">Choose item…</option>
+                                    {componentCandidates.map((c) => (
+                                      <option
+                                        key={c.id}
+                                        value={c.id}
+                                        disabled={
+                                          editingItem?.id === c.id ||
+                                          watchComponents.some(
+                                            (other, j) =>
+                                              j !== idx &&
+                                              other.componentItemId === c.id,
+                                          )
+                                        }
+                                      >
+                                        {c.sku} — {c.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <Input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    className="w-24"
+                                    value={row.quantityPerBundle}
+                                    onChange={(e) => {
+                                      const next = [...watchComponents];
+                                      next[idx] = {
+                                        ...next[idx],
+                                        quantityPerBundle: Number(
+                                          e.target.value,
+                                        ),
+                                      };
+                                      form.setValue("components", next, {
+                                        shouldValidate: true,
+                                      });
+                                    }}
+                                    data-testid={`input-component-qty-${idx}`}
+                                  />
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => {
+                                      const next = watchComponents.filter(
+                                        (_, j) => j !== idx,
+                                      );
+                                      form.setValue("components", next, {
+                                        shouldValidate: true,
+                                      });
+                                    }}
+                                    data-testid={`btn-remove-component-${idx}`}
+                                    aria-label="Remove component"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              ))}
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  form.setValue(
+                                    "components",
+                                    [
+                                      ...watchComponents,
+                                      {
+                                        componentItemId: 0,
+                                        quantityPerBundle: 1,
+                                      },
+                                    ],
+                                    { shouldValidate: true },
+                                  );
+                                }}
+                                data-testid="btn-add-component"
+                              >
+                                <Plus className="mr-1 h-3 w-3" />
+                                Add component
+                              </Button>
+                            </div>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
+                  </div>
+                );
+              })()}
+
+              {(() => {
+                // Track-batches toggle. Disabled when this row is a parent
+                // (variants, not the parent, are tracked) or a bundle
+                // (bundles do not hold physical stock). Existing items
+                // can only be turned off when they have no batches yet —
+                // the API enforces that and returns a friendly error.
+                const isVariantParent = !!(
+                  editingItem && editingItem.hasVariants
+                );
+                const isBundleRow = watchIsBundle;
+                const lockTrack = isVariantParent || isBundleRow;
+                return (
+                  <div className="border-t pt-4 space-y-3">
+                    <FormField
+                      control={form.control}
+                      name="trackBatches"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                          <FormControl>
+                            <Checkbox
+                              checked={field.value}
+                              onCheckedChange={(v) =>
+                                field.onChange(!!v)
+                              }
+                              disabled={lockTrack}
+                              data-testid="checkbox-track-batches"
+                            />
+                          </FormControl>
+                          <div className="space-y-1 leading-none">
+                            <FormLabel>Track batches & expiry</FormLabel>
+                            <FormDescription>
+                              Receipts capture each production batch
+                              (number, expiry, cost). Shipments and
+                              transfers pick from existing batches with
+                              earliest expiry suggested first.
+                              {isVariantParent
+                                ? " Track batches on each variant row instead of the parent."
+                                : isBundleRow
+                                ? " Bundles don't hold physical stock; track batches on the components."
+                                : editingItem && editingItem.trackBatches
+                                ? " Turning this off requires that no batches exist yet."
+                                : ""}
+                            </FormDescription>
+                          </div>
+                        </FormItem>
+                      )}
+                    />
+                    {watchTrackBatches && !lockTrack && (
+                      <p className="text-xs text-muted-foreground">
+                        Stock adjustments from the item page are
+                        disabled for batch-tracked items. Use receipts,
+                        shipments, or transfers instead.
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
+
+              <div className="pt-4 flex justify-end">
+                <Button
+                  type="submit"
+                  disabled={
+                    createMutation.isPending || updateMutation.isPending
+                  }
+                  data-testid="btn-save-item"
+                >
+                  {createMutation.isPending || updateMutation.isPending
+                    ? "Saving..."
+                    : "Save Item"}
+                </Button>
+              </div>
+            </form>
+          </Form>
+        </SheetContent>
+      </Sheet>
+
+      <AlertDialog
+        open={!!deleteDialogItem}
+        onOpenChange={(open) => !open && setDeleteDialogItem(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Item</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete {deleteDialogItem?.name}? This
+              action cannot be undone. Note: Items cannot be deleted if they
+              are used in sales or purchase orders, and parent items must
+              have all their variants deleted first.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() =>
+                deleteDialogItem &&
+                deleteMutation.mutate({ id: deleteDialogItem.id })
+              }
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}

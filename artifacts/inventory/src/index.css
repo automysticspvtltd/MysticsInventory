@@ -1,0 +1,233 @@
+@layer theme, base, components, utilities;
+@import "tailwindcss";
+@import "tw-animate-css";
+@plugin "@tailwindcss/typography";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-card-border: hsl(var(--card-border));
+
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-popover-border: hsl(var(--popover-border));
+
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-primary-border: var(--primary-border);
+
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-secondary-border: var(--secondary-border);
+
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-muted-border: var(--muted-border);
+
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-accent-border: var(--accent-border);
+
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-destructive-border: var(--destructive-border);
+
+  --color-chart-1: hsl(var(--chart-1));
+  --color-chart-2: hsl(var(--chart-2));
+  --color-chart-3: hsl(var(--chart-3));
+  --color-chart-4: hsl(var(--chart-4));
+  --color-chart-5: hsl(var(--chart-5));
+
+  --color-sidebar: hsl(var(--sidebar));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+  --color-sidebar-primary: hsl(var(--sidebar-primary));
+  --color-sidebar-primary-foreground: hsl(var(--sidebar-primary-foreground));
+  --color-sidebar-primary-border: var(--sidebar-primary-border);
+  --color-sidebar-accent: hsl(var(--sidebar-accent));
+  --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
+  --color-sidebar-accent-border: var(--sidebar-accent-border);
+  --color-sidebar-ring: hsl(var(--sidebar-ring));
+
+  --font-sans: var(--app-font-sans);
+  --font-serif: var(--app-font-serif);
+  --font-mono: var(--app-font-mono);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* LIGHT MODE — refined enterprise palette */
+:root {
+  --button-outline: rgba(15, 23, 42, .08);
+  --badge-outline: rgba(15, 23, 42, .05);
+
+  --opaque-button-border-intensity: -8;
+
+  --elevate-1: rgba(28, 22, 14, .03);
+  --elevate-2: rgba(28, 22, 14, .07);
+
+  /* App canvas — warm cream so onyx text and gold accents glow */
+  --background: 38 30% 97%;
+  --foreground: 30 18% 9%;
+  --border: 32 14% 87%;
+  --card: 0 0% 100%;
+  --card-foreground: 30 18% 9%;
+  --card-border: 32 14% 87%;
+
+  /* Sidebar — ivory with onyx text and champagne accent */
+  --sidebar: 0 0% 100%;
+  --sidebar-foreground: 30 18% 9%;
+  --sidebar-border: 32 14% 90%;
+  --sidebar-primary: 30 18% 12%;
+  --sidebar-primary-foreground: 38 30% 97%;
+  --sidebar-accent: 38 65% 95%;
+  --sidebar-accent-foreground: 30 50% 26%;
+  --sidebar-ring: 38 60% 48%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 30 18% 9%;
+  --popover-border: 32 14% 87%;
+
+  /* Brand — deep onyx (Vercel/Aesop quiet confidence) */
+  --primary: 30 18% 12%;
+  --primary-foreground: 38 30% 97%;
+
+  /* Secondary — soft warm taupe */
+  --secondary: 34 16% 94%;
+  --secondary-foreground: 30 18% 9%;
+
+  --muted: 34 16% 94%;
+  --muted-foreground: 30 10% 40%;
+
+  /* Accent — champagne gold for hovers and the focus ring */
+  --accent: 38 65% 94%;
+  --accent-foreground: 30 50% 26%;
+
+  --destructive: 0 65% 45%;
+  --destructive-foreground: 0 0% 100%;
+
+  --input: 32 14% 87%;
+  --ring: 38 60% 48%;
+
+  /* Chart palette — champagne, jade, terracotta, oxblood, taupe */
+  --chart-1: 38 65% 50%;
+  --chart-2: 158 42% 38%;
+  --chart-3: 16 65% 48%;
+  --chart-4: 355 50% 42%;
+  --chart-5: 28 20% 48%;
+
+  --app-font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --app-font-serif: Georgia, serif;
+  --app-font-mono: ui-monospace, 'JetBrains Mono', Menlo, monospace;
+  --radius: 0.625rem;
+
+  --sidebar-primary-border: hsl(var(--sidebar-primary));
+  --sidebar-primary-border: hsl(from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --sidebar-accent-border: hsl(var(--sidebar-accent));
+  --sidebar-accent-border: hsl(from hsl(var(--sidebar-accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --primary-border: hsl(var(--primary));
+  --primary-border: hsl(from hsl(var(--primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --secondary-border: hsl(var(--secondary));
+  --secondary-border: hsl(from hsl(var(--secondary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --muted-border: hsl(var(--muted));
+  --muted-border: hsl(from hsl(var(--muted)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --accent-border: hsl(var(--accent));
+  --accent-border: hsl(from hsl(var(--accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --destructive-border: hsl(var(--destructive));
+  --destructive-border: hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+}
+
+/* DARK MODE — warm onyx with champagne-gold brand on dark */
+.dark {
+  --button-outline: rgba(255, 245, 230, .08);
+  --badge-outline: rgba(255, 245, 230, .04);
+  --opaque-button-border-intensity: 9;
+  --elevate-1: rgba(255, 245, 230, .03);
+  --elevate-2: rgba(255, 245, 230, .07);
+
+  --background: 28 14% 5%;
+  --foreground: 38 28% 96%;
+  --border: 30 12% 14%;
+  --card: 28 16% 8%;
+  --card-foreground: 38 28% 96%;
+  --card-border: 30 12% 14%;
+
+  --sidebar: 28 14% 4%;
+  --sidebar-foreground: 38 28% 96%;
+  --sidebar-border: 30 12% 12%;
+  --sidebar-primary: 38 70% 60%;
+  --sidebar-primary-foreground: 28 14% 5%;
+  --sidebar-accent: 30 14% 13%;
+  --sidebar-accent-foreground: 38 70% 75%;
+  --sidebar-ring: 38 70% 60%;
+
+  --popover: 28 16% 8%;
+  --popover-foreground: 38 28% 96%;
+  --popover-border: 30 12% 14%;
+
+  /* Brand on dark — champagne gold lifts off the warm onyx */
+  --primary: 38 70% 60%;
+  --primary-foreground: 28 14% 5%;
+
+  --secondary: 30 14% 13%;
+  --secondary-foreground: 38 28% 96%;
+
+  --muted: 30 14% 13%;
+  --muted-foreground: 35 12% 68%;
+
+  --accent: 30 14% 13%;
+  --accent-foreground: 38 70% 75%;
+
+  --destructive: 0 65% 50%;
+  --destructive-foreground: 0 0% 100%;
+
+  --input: 30 12% 14%;
+  --ring: 38 70% 60%;
+
+  --chart-1: 38 70% 60%;
+  --chart-2: 158 50% 52%;
+  --chart-3: 16 70% 58%;
+  --chart-4: 355 60% 58%;
+  --chart-5: 28 22% 60%;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply font-sans antialiased bg-background text-foreground;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  /* Subtle scrollbar polish for premium feel */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.4);
+    background-clip: content-box;
+  }
+}

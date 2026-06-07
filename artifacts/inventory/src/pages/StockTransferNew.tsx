@@ -1,0 +1,449 @@
+import { PageHeader } from "@/components/PageHeader";
+import {
+  useCreateStockTransfer,
+  useListWarehouses,
+  useListItems,
+  getListStockTransfersQueryKey,
+  lookupItemByCode,
+} from "@/lib/queryKeys";
+import { BarcodeScannerDialog } from "@/components/BarcodeScannerDialog";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { useForm, useFieldArray } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import * as z from "zod";
+import { useLocation, Link } from "wouter";
+import { useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
+import { format } from "date-fns";
+import { Trash2, Plus, ArrowLeft, ScanLine } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
+import { ItemPicker } from "@/components/ItemPicker";
+import { useState } from "react";
+
+const lineSchema = z.object({
+  itemId: z.coerce.number().min(1, "Item required"),
+  quantity: z.coerce.number().gt(0, "Must be > 0"),
+});
+
+const schema = z
+  .object({
+    fromWarehouseId: z.coerce.number().min(1, "Source warehouse is required"),
+    toWarehouseId: z.coerce
+      .number()
+      .min(1, "Destination warehouse is required"),
+    transferDate: z.string().min(1, "Date is required"),
+    notes: z.string().optional(),
+    lines: z.array(lineSchema).min(1, "At least one item is required"),
+  })
+  .refine((d) => d.fromWarehouseId !== d.toWarehouseId, {
+    message: "Source and destination must be different",
+    path: ["toWarehouseId"],
+  });
+
+type FormValues = z.infer<typeof schema>;
+
+export default function StockTransferNew() {
+  const [, setLocation] = useLocation();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const { data: warehouses } = useListWarehouses();
+
+  const createMutation = useCreateStockTransfer({
+    mutation: {
+      onSuccess: (detail) => {
+        queryClient.invalidateQueries({
+          queryKey: getListStockTransfersQueryKey(),
+        });
+        toast({ title: "Transfer created" });
+        setLocation(`/transfers/${detail.transfer.id}`);
+      },
+      onError: (err: unknown) => {
+        const e = err as { response?: { data?: { error?: string } } };
+        toast({
+          title: "Could not create transfer",
+          description: e.response?.data?.error ?? "Please try again.",
+          variant: "destructive",
+        });
+      },
+    },
+  });
+
+  const form = useForm<FormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: {
+      fromWarehouseId: 0,
+      toWarehouseId: 0,
+      transferDate: format(new Date(), "yyyy-MM-dd"),
+      notes: "",
+      lines: [{ itemId: 0, quantity: 1 }],
+    },
+  });
+
+  const { fields, append, remove } = useFieldArray({
+    control: form.control,
+    name: "lines",
+  });
+
+  // Scope the item list to the source warehouse so we can show on-hand
+  // stock; the cascade picker partitions parents vs variants client-side.
+  const fromWarehouseId = form.watch("fromWarehouseId");
+  const { data: items } = useListItems(
+    fromWarehouseId ? { warehouseId: Number(fromWarehouseId) } : {},
+  );
+  const [parentByLine, setParentByLine] = useState<Record<string, number>>({});
+  const [scannerOpen, setScannerOpen] = useState(false);
+
+  /**
+   * Resolve a scanned/typed barcode → item, then either bump the
+   * matching line's quantity (if the item is already on the transfer)
+   * or append a fresh line. The resolved item must be present in the
+   * source-warehouse stock list, otherwise we can't transfer it from
+   * here.
+   */
+  const handleScannedCode = async (code: string) => {
+    setScannerOpen(false);
+    if (!fromWarehouseId) {
+      toast({
+        title: "Pick a source warehouse first",
+        variant: "destructive",
+      });
+      return;
+    }
+    let lookedUp;
+    try {
+      lookedUp = await lookupItemByCode({ code });
+    } catch {
+      toast({
+        title: "No item found for that code",
+        description: `Tried "${code}". Check the barcode is registered on an item.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    const stockItem = items?.find((i) => i.id === lookedUp.id);
+    if (!stockItem) {
+      toast({
+        title: "Item not in source warehouse",
+        description: `${lookedUp.name} (${lookedUp.sku}) has no stock at the picked source.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    if (stockItem.hasVariants) {
+      toast({
+        title: "Variant item — pick manually",
+        description: `${stockItem.name} has variants; choose the specific one in the line.`,
+      });
+      return;
+    }
+    const lines = form.getValues("lines");
+    const idx = lines.findIndex((l) => l.itemId === stockItem.id);
+    if (idx >= 0) {
+      const cur = Number(lines[idx]?.quantity) || 0;
+      form.setValue(`lines.${idx}.quantity`, cur + 1, { shouldDirty: true });
+    } else {
+      // Replace a blank starter line if present, otherwise append.
+      const blankIdx = lines.findIndex((l) => !l.itemId);
+      if (blankIdx >= 0) {
+        form.setValue(`lines.${blankIdx}.itemId`, stockItem.id, {
+          shouldDirty: true,
+        });
+        form.setValue(`lines.${blankIdx}.quantity`, 1, { shouldDirty: true });
+      } else {
+        append({ itemId: stockItem.id, quantity: 1 });
+      }
+    }
+    toast({ title: `Added ${stockItem.name}` });
+  };
+
+  const handleParentChange = (index: number, fieldId: string, parentId: number) => {
+    const picked = items?.find((i) => i.id === parentId);
+    if (!picked) return;
+    if (picked.hasVariants) {
+      setParentByLine((prev) => ({ ...prev, [fieldId]: parentId }));
+      form.setValue(`lines.${index}.itemId`, 0);
+    } else {
+      setParentByLine((prev) => {
+        const next = { ...prev };
+        delete next[fieldId];
+        return next;
+      });
+      form.setValue(`lines.${index}.itemId`, picked.id);
+    }
+  };
+
+  const handleVariantChange = (index: number, fieldId: string, variantId: number) => {
+    setParentByLine((prev) => {
+      const next = { ...prev };
+      delete next[fieldId];
+      return next;
+    });
+    form.setValue(`lines.${index}.itemId`, variantId);
+  };
+
+  const onSubmit = (data: FormValues) => {
+    createMutation.mutate({
+      data: {
+        fromWarehouseId: data.fromWarehouseId,
+        toWarehouseId: data.toWarehouseId,
+        transferDate: data.transferDate,
+        notes: data.notes || null,
+        lines: data.lines,
+      },
+    });
+  };
+
+  return (
+    <div className="space-y-6 max-w-5xl">
+      <div className="flex items-center gap-4">
+        <Button variant="ghost" size="icon" asChild>
+          <Link href="/transfers">
+            <ArrowLeft className="h-5 w-5" />
+          </Link>
+        </Button>
+        <PageHeader title="New Stock Transfer" className="mb-0" />
+      </div>
+
+      <Form {...form}>
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+          <Card>
+            <CardContent className="pt-6 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <FormField
+                  control={form.control}
+                  name="fromWarehouseId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>From Warehouse *</FormLabel>
+                      <Select
+                        onValueChange={field.onChange}
+                        value={field.value ? field.value.toString() : ""}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-from-warehouse">
+                            <SelectValue placeholder="Source warehouse" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {warehouses?.map((w) => (
+                            <SelectItem key={w.id} value={w.id.toString()}>
+                              {w.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="toWarehouseId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>To Warehouse *</FormLabel>
+                      <Select
+                        onValueChange={field.onChange}
+                        value={field.value ? field.value.toString() : ""}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-to-warehouse">
+                            <SelectValue placeholder="Destination warehouse" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {warehouses?.map((w) => (
+                            <SelectItem key={w.id} value={w.id.toString()}>
+                              {w.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="transferDate"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Transfer Date *</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="date"
+                          {...field}
+                          data-testid="input-transfer-date"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="pt-6">
+              <h3 className="font-medium text-lg mb-4">Items to transfer</h3>
+
+              <div className="space-y-4">
+                {fields.map((field, index) => (
+                  <div
+                    key={field.id}
+                    className="flex gap-3 items-start border p-4 rounded-lg bg-muted/20 relative"
+                  >
+                    <div className="grid grid-cols-12 gap-3 w-full">
+                      <div className="col-span-12 md:col-span-8">
+                        <FormField
+                          control={form.control}
+                          name={`lines.${index}.itemId`}
+                          render={({ field: selectField, fieldState }) => (
+                            <ItemPicker
+                              items={items ?? []}
+                              selectedItemId={selectField.value || null}
+                              parentSelection={parentByLine[field.id] ?? null}
+                              onParentChange={(pid) =>
+                                pid != null && handleParentChange(index, field.id, pid)
+                              }
+                              onVariantChange={(vid) =>
+                                handleVariantChange(index, field.id, vid)
+                              }
+                              testIdPrefix={`select-item-${index}`}
+                              errorMessage={fieldState.error?.message}
+                              disabled={!fromWarehouseId}
+                              disabledMessage="Pick a source warehouse first"
+                              emptyMessage="No items in stock at the source warehouse"
+                              showStockHint
+                            />
+                          )}
+                        />
+                      </div>
+                      <div className="col-span-12 md:col-span-4">
+                        <FormField
+                          control={form.control}
+                          name={`lines.${index}.quantity`}
+                          render={({ field: inputField }) => (
+                            <FormItem>
+                              <FormLabel className="text-xs">
+                                Quantity
+                              </FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="text"
+                                  inputMode="decimal"
+                                  {...inputField}
+                                  data-testid={`input-qty-${index}`}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    </div>
+                    {fields.length > 1 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="text-destructive h-9 w-9 mt-6"
+                        onClick={() => remove(index)}
+                        data-testid={`btn-remove-line-${index}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => append({ itemId: 0, quantity: 1 })}
+                  data-testid="btn-add-line"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Line Item
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setScannerOpen(true)}
+                  disabled={!fromWarehouseId}
+                  data-testid="btn-scan-line"
+                >
+                  <ScanLine className="mr-2 h-4 w-4" />
+                  Scan barcode
+                </Button>
+              </div>
+
+              <Separator className="my-6" />
+
+              <FormField
+                control={form.control}
+                name="notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Notes</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        {...field}
+                        className="h-24"
+                        placeholder="Reason for the transfer, courier details, etc."
+                        data-testid="input-notes"
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+            </CardContent>
+          </Card>
+
+          <div className="flex justify-end gap-4">
+            <Button type="button" variant="outline" asChild>
+              <Link href="/transfers">Cancel</Link>
+            </Button>
+            <Button
+              type="submit"
+              disabled={createMutation.isPending}
+              data-testid="btn-submit-transfer"
+            >
+              {createMutation.isPending ? "Creating..." : "Create transfer"}
+            </Button>
+          </div>
+        </form>
+      </Form>
+
+      <BarcodeScannerDialog
+        open={scannerOpen}
+        onOpenChange={setScannerOpen}
+        onDetected={handleScannedCode}
+        title="Scan item barcode"
+        description="Point your camera at the item's barcode to add it to this transfer."
+      />
+    </div>
+  );
+}

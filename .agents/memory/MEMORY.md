@@ -1,0 +1,2 @@
+- [Bulk order inserts collide on order number](order-number-collisions.md) — `nextOrderNumber` uses a random suffix; any bulk/batch insert of sales/purchase orders must retry on the per-org order-number unique index.
+- [Shopify import job store](shopify-import-job-store.md) — DB-backed; startup "running→failed" reconcile must guard on `startedAt < PROCESS_BOOT_AT` or it fails live jobs.
