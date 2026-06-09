@@ -13,7 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, MoreHorizontal, Edit, Trash2, Store } from "lucide-react";
+import { Plus, MoreHorizontal, Edit, Trash2, Store, ChevronLeft, ChevronRight } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
@@ -76,6 +76,10 @@ export default function Warehouses() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editingWarehouse, setEditingWarehouse] = useState<Warehouse | null>(null);
   const [deleteDialogWarehouse, setDeleteDialogWarehouse] = useState<Warehouse | null>(null);
+  const ITEMS_PER_PAGE = 15;
+  const [page, setPage] = useState(1);
+  const warehouseTotal = (warehouses ?? []).length;
+  const pagedWarehouses = (warehouses ?? []).slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
   
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -225,7 +229,7 @@ export default function Warehouses() {
                 <TableCell colSpan={shopifyConnected ? 6 : 5} className="h-24 text-center">No warehouses found.</TableCell>
               </TableRow>
             ) : (
-              warehouses?.map((warehouse) => (
+              pagedWarehouses.map((warehouse) => (
                 <TableRow key={warehouse.id} data-testid={`row-warehouse-${warehouse.id}`}>
                   <TableCell className="font-mono text-xs">{warehouse.code}</TableCell>
                   <TableCell className="font-medium">{warehouse.name}</TableCell>
@@ -279,6 +283,21 @@ export default function Warehouses() {
           </TableBody>
         </Table>
       </div>
+      {warehouseTotal > ITEMS_PER_PAGE && (
+        <div className="flex items-center justify-between px-2 py-3 border rounded-md bg-card">
+          <p className="text-sm text-muted-foreground">
+            Showing {(page - 1) * ITEMS_PER_PAGE + 1}–{Math.min(page * ITEMS_PER_PAGE, warehouseTotal)} of {warehouseTotal}
+          </p>
+          <div className="flex items-center gap-1">
+            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p - 1)} disabled={page === 1}>
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p + 1)} disabled={page * ITEMS_PER_PAGE >= warehouseTotal}>
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
 
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
         <SheetContent className="sm:max-w-md overflow-y-auto">

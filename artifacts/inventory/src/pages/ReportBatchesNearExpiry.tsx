@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import {
   useGetBatchesNearExpiryReport,
@@ -23,7 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft, CalendarClock } from "lucide-react";
+import { ArrowLeft, CalendarClock, ChevronLeft, ChevronRight } from "lucide-react";
 import { Link } from "wouter";
 import { formatDate } from "@/lib/format";
 import { ReportExportButton, type ExportColumn } from "@/components/ReportExportButton";
@@ -39,6 +39,12 @@ export default function ReportBatchesNearExpiry() {
       : {}),
   };
   const { data: rows, isLoading } = useGetBatchesNearExpiryReport(params);
+
+  const ITEMS_PER_PAGE = 15;
+  const [page, setPage] = useState(1);
+  useEffect(() => setPage(1), [days, warehouseId]);
+  const total = (rows ?? []).length;
+  const pagedRows = (rows ?? []).slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
 
   type Row = NonNullable<typeof rows>[number];
   const exportColumns: ExportColumn<Row>[] = [
@@ -167,7 +173,7 @@ export default function ReportBatchesNearExpiry() {
                 </TableCell>
               </TableRow>
             ) : (
-              rows.map((r) => {
+              pagedRows.map((r) => {
                 const status = r.expired
                   ? {
                       label: `Expired (${-r.daysUntilExpiry}d ago)`,
@@ -224,6 +230,21 @@ export default function ReportBatchesNearExpiry() {
           </TableBody>
         </Table>
       </div>
+      {total > ITEMS_PER_PAGE && (
+        <div className="flex items-center justify-between px-2 py-3 border rounded-md bg-card">
+          <p className="text-sm text-muted-foreground">
+            Showing {(page - 1) * ITEMS_PER_PAGE + 1}–{Math.min(page * ITEMS_PER_PAGE, total)} of {total}
+          </p>
+          <div className="flex items-center gap-1">
+            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p - 1)} disabled={page === 1}>
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p + 1)} disabled={page * ITEMS_PER_PAGE >= total}>
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "wouter";
 import { PageHeader } from "@/components/PageHeader";
 import { useReportStockWithJobWorkers } from "@/lib/queryKeys";
@@ -11,7 +12,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
 
 export default function ReportStockWithJobWorkers() {
   const { data, isLoading } = useReportStockWithJobWorkers();
@@ -38,6 +39,11 @@ export default function ReportStockWithJobWorkers() {
     supplierName: g.supplierName,
     items: g.items,
   }));
+
+  const ITEMS_PER_PAGE = 10;
+  const [page, setPage] = useState(1);
+  const totalGroups = groupedList.length;
+  const pagedGroupedList = groupedList.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
 
   return (
     <div className="space-y-6">
@@ -68,7 +74,7 @@ export default function ReportStockWithJobWorkers() {
         </Card>
       ) : (
         <div className="space-y-4">
-          {groupedList.map((group) => (
+          {pagedGroupedList.map((group) => (
             <Card
               key={group.supplierId}
               data-testid={`group-${group.supplierId}`}
@@ -121,6 +127,21 @@ export default function ReportStockWithJobWorkers() {
               </CardContent>
             </Card>
           ))}
+          {totalGroups > ITEMS_PER_PAGE && (
+            <div className="flex items-center justify-between px-2 py-3 border rounded-md bg-card">
+              <p className="text-sm text-muted-foreground">
+                Showing {(page - 1) * ITEMS_PER_PAGE + 1}–{Math.min(page * ITEMS_PER_PAGE, totalGroups)} of {totalGroups} workers
+              </p>
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p - 1)} disabled={page === 1}>
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p + 1)} disabled={page * ITEMS_PER_PAGE >= totalGroups}>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

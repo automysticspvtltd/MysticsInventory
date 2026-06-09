@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { useQuery } from "@tanstack/react-query";
 import { customFetch } from "@workspace/api-client-react";
@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
 import { Link } from "wouter";
 import { ReportExportButton, type ExportColumn } from "@/components/ReportExportButton";
 
@@ -68,6 +68,10 @@ export default function ReportWarehouseValuation() {
 
   const totalValue = filtered.reduce((sum, r) => sum + r.totalValue, 0);
 
+  const GROUPS_PER_PAGE = 10;
+  const [page, setPage] = useState(1);
+  useEffect(() => setPage(1), [selectedWarehouse]);
+
   const groups = useMemo(() => {
     const map = new Map<
       number,
@@ -84,6 +88,9 @@ export default function ReportWarehouseValuation() {
     }
     return Array.from(map.values());
   }, [filtered]);
+
+  const totalGroups = groups.length;
+  const pagedGroups = groups.slice((page - 1) * GROUPS_PER_PAGE, page * GROUPS_PER_PAGE);
 
   type Row = WarehouseValuationRow;
   const exportColumns: ExportColumn<Row>[] = [
@@ -179,7 +186,7 @@ export default function ReportWarehouseValuation() {
                 </TableCell>
               </TableRow>
             ) : (
-              groups.flatMap((group) => [
+              pagedGroups.flatMap((group) => [
                 <TableRow
                   key={`wh-header-${group.warehouseId}`}
                   className="bg-muted/50 hover:bg-muted/50"
@@ -233,6 +240,21 @@ export default function ReportWarehouseValuation() {
           </TableBody>
         </Table>
       </div>
+      {totalGroups > GROUPS_PER_PAGE && (
+        <div className="flex items-center justify-between px-2 py-3 border rounded-md bg-card">
+          <p className="text-sm text-muted-foreground">
+            Showing warehouses {(page - 1) * GROUPS_PER_PAGE + 1}–{Math.min(page * GROUPS_PER_PAGE, totalGroups)} of {totalGroups}
+          </p>
+          <div className="flex items-center gap-1">
+            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p - 1)} disabled={page === 1}>
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p + 1)} disabled={page * GROUPS_PER_PAGE >= totalGroups}>
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

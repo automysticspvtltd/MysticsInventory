@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { useGetLowStockReport, useListWarehouses } from "@/lib/queryKeys";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, AlertTriangle } from "lucide-react";
+import { ArrowLeft, AlertTriangle, ChevronLeft, ChevronRight } from "lucide-react";
 import { Link } from "wouter";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -23,6 +23,12 @@ export default function ReportLowStock() {
 
   const hasFilters = !!(warehouseId || search.trim());
   const clearFilters = () => { setWarehouseId(""); setSearch(""); };
+
+  const ITEMS_PER_PAGE = 15;
+  const [page, setPage] = useState(1);
+  useEffect(() => setPage(1), [warehouseId, search]);
+  const total = (rows ?? []).length;
+  const pagedRows = (rows ?? []).slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
 
   type Row = NonNullable<typeof rows>[number];
   const exportColumns: ExportColumn<Row>[] = [
@@ -118,7 +124,7 @@ export default function ReportLowStock() {
                 </TableCell>
               </TableRow>
             ) : (
-              rows?.map((row, idx) => (
+              pagedRows.map((row, idx) => (
                 <TableRow key={`${row.itemId}-${row.warehouseId}-${idx}`} className="bg-red-50/50 hover:bg-red-50/80 dark:bg-red-950/10 dark:hover:bg-red-950/20">
                   <TableCell className="font-mono text-xs text-muted-foreground">{row.sku}</TableCell>
                   <TableCell className="font-medium">
@@ -135,6 +141,21 @@ export default function ReportLowStock() {
           </TableBody>
         </Table>
       </div>
+      {total > ITEMS_PER_PAGE && (
+        <div className="flex items-center justify-between px-2 py-3 border rounded-md bg-card">
+          <p className="text-sm text-muted-foreground">
+            Showing {(page - 1) * ITEMS_PER_PAGE + 1}–{Math.min(page * ITEMS_PER_PAGE, total)} of {total}
+          </p>
+          <div className="flex items-center gap-1">
+            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p - 1)} disabled={page === 1}>
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p + 1)} disabled={page * ITEMS_PER_PAGE >= total}>
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

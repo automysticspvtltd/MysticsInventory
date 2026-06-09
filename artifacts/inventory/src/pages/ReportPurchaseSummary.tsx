@@ -3,7 +3,7 @@ import { useGetPurchaseSummaryReport, useListSuppliers, useListWarehouses } from
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatCurrency } from "@/lib/format";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
 import { Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -11,7 +11,7 @@ import { format, parseISO } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ReportExportButton, type ExportColumn } from "@/components/ReportExportButton";
 
 export default function ReportPurchaseSummary() {
@@ -32,6 +32,10 @@ export default function ReportPurchaseSummary() {
 
   const hasFilters = !!(from || to || supplierId || warehouseId);
   const clearFilters = () => { setFrom(""); setTo(""); setSupplierId(""); setWarehouseId(""); };
+
+  const ITEMS_PER_PAGE = 15;
+  const [page, setPage] = useState(1);
+  useEffect(() => setPage(1), [from, to, supplierId, warehouseId]);
 
   if (isLoading || !report) {
     return <div className="space-y-6"><Skeleton className="h-40 w-full" /></div>;
@@ -202,7 +206,7 @@ export default function ReportPurchaseSummary() {
                   <TableCell colSpan={3} className="h-24 text-center">No purchase data.</TableCell>
                 </TableRow>
               ) : (
-                report.bySupplier.map((row) => (
+                report.bySupplier.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE).map((row) => (
                   <TableRow key={row.supplierId}>
                     <TableCell className="font-medium">{row.supplierName}</TableCell>
                     <TableCell className="text-right">{row.orderCount}</TableCell>
@@ -214,6 +218,21 @@ export default function ReportPurchaseSummary() {
           </Table>
         </CardContent>
       </Card>
+      {report.bySupplier.length > ITEMS_PER_PAGE && (
+        <div className="flex items-center justify-between px-2 py-3 border rounded-md bg-card">
+          <p className="text-sm text-muted-foreground">
+            Showing {(page - 1) * ITEMS_PER_PAGE + 1}–{Math.min(page * ITEMS_PER_PAGE, report.bySupplier.length)} of {report.bySupplier.length}
+          </p>
+          <div className="flex items-center gap-1">
+            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p - 1)} disabled={page === 1}>
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p + 1)} disabled={page * ITEMS_PER_PAGE >= report.bySupplier.length}>
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

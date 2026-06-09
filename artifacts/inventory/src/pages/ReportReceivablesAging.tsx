@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "wouter";
 import { PageHeader } from "@/components/PageHeader";
 import {
@@ -16,7 +17,7 @@ import {
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 import { ReportExportButton, type ExportColumn } from "@/components/ReportExportButton";
 
@@ -24,6 +25,11 @@ export default function ReportReceivablesAging() {
   const { data, isLoading } = useGetReceivablesAgingReport({
     query: { queryKey: getGetReceivablesAgingReportQueryKey() },
   });
+
+  const ITEMS_PER_PAGE = 15;
+  const [page, setPage] = useState(1);
+  const total = data?.rows.length ?? 0;
+  const pagedRows = (data?.rows ?? []).slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
 
   type Row = NonNullable<typeof data>["rows"][number];
   const exportColumns: ExportColumn<Row>[] = [
@@ -74,6 +80,7 @@ export default function ReportReceivablesAging() {
               No outstanding balances. Everything is current.
             </p>
           ) : (
+            <>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -87,7 +94,7 @@ export default function ReportReceivablesAging() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.rows.map((r) => (
+                {pagedRows.map((r) => (
                   <TableRow
                     key={r.customerId}
                     data-testid={`row-aging-${r.customerId}`}
@@ -145,6 +152,22 @@ export default function ReportReceivablesAging() {
                 </TableRow>
               </TableFooter>
             </Table>
+            {total > ITEMS_PER_PAGE && (
+              <div className="flex items-center justify-between px-2 py-3 border-t mt-2">
+                <p className="text-sm text-muted-foreground">
+                  Showing {(page - 1) * ITEMS_PER_PAGE + 1}–{Math.min(page * ITEMS_PER_PAGE, total)} of {total}
+                </p>
+                <div className="flex items-center gap-1">
+                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p - 1)} disabled={page === 1}>
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p + 1)} disabled={page * ITEMS_PER_PAGE >= total}>
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+            </>
           )}
         </CardContent>
       </Card>
