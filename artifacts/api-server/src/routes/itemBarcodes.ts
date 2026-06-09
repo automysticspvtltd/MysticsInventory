@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { and, eq, inArray } from "drizzle-orm";
 import PDFDocument from "pdfkit";
+import { z } from "zod/v4";
 import { db, itemsTable } from "@workspace/db";
 import { tenantMiddleware } from "../lib/tenant";
 import { renderBarcodePng, resolveBarcodeValue } from "../lib/barcode";
@@ -68,6 +69,7 @@ router.get("/items/barcode-labels.pdf", async (req, res, next) => {
         name: itemsTable.name,
         barcode: itemsTable.barcode,
         salePrice: itemsTable.salePrice,
+        purchasePrice: itemsTable.purchasePrice,
       })
       .from(itemsTable)
       .where(
@@ -167,13 +169,19 @@ router.get("/items/barcode-labels.pdf", async (req, res, next) => {
             ellipsis: true,
           });
 
-        const priceNum = Number(item.salePrice);
-        if (Number.isFinite(priceNum) && priceNum > 0) {
+        const mrpNum = Number(item.purchasePrice);
+        const saleNum = Number(item.salePrice);
+        const hasMrp = Number.isFinite(mrpNum) && mrpNum > 0;
+        const hasSale = Number.isFinite(saleNum) && saleNum > 0;
+        if (hasMrp || hasSale) {
+          const priceParts: string[] = [];
+          if (hasMrp) priceParts.push(`MRP Rs.${mrpNum.toFixed(2)}`);
+          if (hasSale) priceParts.push(`Sale Rs.${saleNum.toFixed(2)}`);
           doc
             .font("Helvetica-Bold")
-            .fontSize(8)
+            .fontSize(7)
             .fillColor("#0f172a")
-            .text(`Rs. ${priceNum.toFixed(2)}`, x + padX, y + cellH - padY - 8, {
+            .text(priceParts.join("  "), x + padX, y + cellH - padY - 8, {
               width: innerW,
               align: "center",
               lineBreak: false,
@@ -193,6 +201,108 @@ router.get("/items/barcode-labels.pdf", async (req, res, next) => {
     // Flush buffered pages to the output stream then close the document.
     doc.flushPages();
     doc.end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+const BarcodeImportRowSchema = z.object({
+  sku: z.string().min(1, "SKU is required"),
+  barcode: z.string().nullish(),
+  salePrice: z.string().nullish(),
+  purchasePrice: z.string().nullish(),
+});
+
+const BarcodeImportBodySchema = z.object({
+  rows: z.array(BarcodeImportRowSchema).min(1).max(1000),
+});
+
+router.post("/items/barcode-import", async (req, res, next) => {
+  try {
+    const t = req.tenant!;
+    const parsed = BarcodeImportBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid request body" });
+      return;
+    }
+    const { rows } = parsed.data;
+
+    // Batch-fetch all items by SKU up front to avoid N+1.
+    const skus = [...new Set(rows.map((r) => r.sku.trim()).filter(Boolean))];
+    const existingItems = await db
+      .select({ id: itemsTable.id, sku: itemsTable.sku })
+      .from(itemsTable)
+      .where(
+        and(
+          inArray(itemsTable.sku, skus),
+          eq(itemsTable.organizationId, t.organizationId),
+        ),
+      );
+    const itemBySku = new Map(existingItems.map((i) => [i.sku, i.id]));
+
+    let updated = 0;
+    let failed = 0;
+    const errors: string[] = [];
+
+    for (const row of rows) {
+      const sku = row.sku.trim();
+
+      // Validate prices.
+      let salePriceStr: string | undefined;
+      let purchasePriceStr: string | undefined;
+
+      if (row.salePrice != null && row.salePrice !== "") {
+        const n = Number(row.salePrice);
+        if (!Number.isFinite(n) || n < 0) {
+          errors.push(`SKU "${sku}": Sales Price must be a non-negative number`);
+          failed++;
+          continue;
+        }
+        salePriceStr = String(n);
+      }
+      if (row.purchasePrice != null && row.purchasePrice !== "") {
+        const n = Number(row.purchasePrice);
+        if (!Number.isFinite(n) || n < 0) {
+          errors.push(`SKU "${sku}": MRP must be a non-negative number`);
+          failed++;
+          continue;
+        }
+        purchasePriceStr = String(n);
+      }
+
+      const itemId = itemBySku.get(sku);
+      if (!itemId) {
+        errors.push(`SKU "${sku}" not found`);
+        failed++;
+        continue;
+      }
+
+      const updateFields: {
+        barcode?: string;
+        salePrice?: string;
+        purchasePrice?: string;
+      } = {};
+      if (row.barcode != null && row.barcode.trim() !== "") {
+        updateFields.barcode = row.barcode.trim();
+      }
+      if (salePriceStr !== undefined) updateFields.salePrice = salePriceStr;
+      if (purchasePriceStr !== undefined) updateFields.purchasePrice = purchasePriceStr;
+
+      if (Object.keys(updateFields).length > 0) {
+        await db
+          .update(itemsTable)
+          .set(updateFields)
+          .where(
+            and(
+              eq(itemsTable.id, itemId),
+              eq(itemsTable.organizationId, t.organizationId),
+            ),
+          );
+      }
+      updated++;
+    }
+
+    res.json({ updated, failed, errors });
   } catch (err) {
     next(err);
   }

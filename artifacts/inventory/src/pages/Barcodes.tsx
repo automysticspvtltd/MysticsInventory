@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
+import { BarcodeImportDialog } from "@/components/BarcodeImportDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
@@ -43,7 +44,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Printer, RefreshCw, ScanLine, Sparkles } from "lucide-react";
+import { Printer, RefreshCw, ScanLine, Sparkles, Upload } from "lucide-react";
 import { ReportExportButton, type ExportColumn } from "@/components/ReportExportButton";
 
 type FilterMode = "all" | "missing" | "auto" | "manual" | "mismatch";
@@ -129,9 +130,13 @@ export default function Barcodes() {
       { header: "SKU", accessor: (i) => i.sku },
       { header: "Barcode", accessor: (i) => i.barcode ?? "" },
       { header: "Category", accessor: (i) => i.category ?? "" },
+      { header: "Sales Price", accessor: (i) => i.salePrice ?? "" },
+      { header: "MRP", accessor: (i) => i.purchasePrice ?? "" },
     ],
     [],
   );
+
+  const [importOpen, setImportOpen] = useState(false);
 
   const allSelected =
     filtered.length > 0 && filtered.every((i) => selected.has(i.id));
@@ -311,6 +316,16 @@ export default function Barcodes() {
               </SelectContent>
             </Select>
             <div className="md:ml-auto flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setImportOpen(true)}
+                disabled={isLoading}
+                data-testid="btn-barcode-import-open"
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                Import
+              </Button>
               <ReportExportButton
                 filename="barcodes"
                 title="Barcodes Export"
@@ -499,6 +514,8 @@ export default function Barcodes() {
           )}
         </CardContent>
       </Card>
+
+      <BarcodeImportDialog open={importOpen} onOpenChange={setImportOpen} />
     </div>
   );
 }
