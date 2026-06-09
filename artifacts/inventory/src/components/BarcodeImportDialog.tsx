@@ -94,6 +94,7 @@ const HEADER_MAP: Record<string, keyof ParsedRow | "_productName" | "_category">
   upc: "barcode",
   gtin: "barcode",
   category: "_category",
+  salesprice: "salePrice",
   saleprice: "salePrice",
   sellingprice: "salePrice",
   mrp: "purchasePrice",
