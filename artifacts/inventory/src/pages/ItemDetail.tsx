@@ -78,6 +78,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useState, useMemo, useEffect } from "react";
+import { normalizeRole } from "@/lib/permissions";
+import { useGetMe } from "@/lib/queryKeys";
 import { useRecordVisit } from "@/lib/recentRecords";
 
 const adjustStockSchema = z.object({
@@ -139,6 +141,11 @@ function variantLabel(opts: unknown): string {
 export default function ItemDetail() {
   const { id } = useParams();
   const itemId = parseInt(id || "0", 10);
+
+  const { data: me } = useGetMe();
+  const isAdmin =
+    (me?.user?.isSuperAdmin ?? false) ||
+    (["owner", "admin"] as const).some((r) => r === normalizeRole(me?.role));
 
   const { data: itemDetail, isLoading } = useGetItem(itemId, {
     query: { enabled: !!itemId, queryKey: getGetItemQueryKey(itemId) },
@@ -329,7 +336,7 @@ export default function ItemDetail() {
                 have the system overwrite them, so we hide the button
                 in that state.
               */}
-              {item.barcodeSource !== "manual" ? (
+              {isAdmin && item.barcodeSource !== "manual" ? (
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button

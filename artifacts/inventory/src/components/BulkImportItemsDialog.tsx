@@ -461,8 +461,8 @@ export function BulkImportItemsDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => (v ? onOpenChange(true) : handleClose())}>
-      <DialogContent className="max-w-3xl">
-        <DialogHeader>
+      <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
+        <DialogHeader className="shrink-0">
           <DialogTitle>Bulk import items</DialogTitle>
           <DialogDescription>
             Upload a CSV or Excel (.xlsx) file with up to {MAX_ROWS} rows.
@@ -472,7 +472,7 @@ export function BulkImportItemsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="space-y-4 flex-1 overflow-y-auto min-h-0 pr-1">
           {/* File chooser + template */}
           <div className="flex flex-wrap items-center gap-3">
             <input
@@ -715,7 +715,7 @@ export function BulkImportItemsDialog({
           )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0 pt-2 border-t">
           <Button
             type="button"
             variant="ghost"

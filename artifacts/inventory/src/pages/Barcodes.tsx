@@ -32,7 +32,10 @@ import {
   useAssignMissingItemBarcodes,
   useGetCurrentOrganization,
   downloadItemBarcodeLabelsPdf,
+  useGetMe,
+  customFetch,
 } from "@/lib/queryKeys";
+import { normalizeRole } from "@/lib/permissions";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -44,7 +47,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Printer, RefreshCw, ScanLine, Sparkles, Upload } from "lucide-react";
+import { Printer, RefreshCw, ScanLine, Sparkles, Trash2, Upload } from "lucide-react";
 import { ReportExportButton, type ExportColumn } from "@/components/ReportExportButton";
 
 type FilterMode = "all" | "missing" | "auto" | "manual" | "mismatch";
@@ -70,6 +73,12 @@ export default function Barcodes() {
   const [filter, setFilter] = useState<FilterMode>("all");
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [copies, setCopies] = useState<number>(1);
+  const [clearingId, setClearingId] = useState<number | null>(null);
+
+  const { data: me } = useGetMe();
+  const isAdmin =
+    (me?.user?.isSuperAdmin ?? false) ||
+    (["owner", "admin"] as const).some((r) => r === normalizeRole(me?.role));
 
   const { data: items, isLoading } = useListItems({ excludeVariants: true });
   const { data: org } = useGetCurrentOrganization();
@@ -202,6 +211,31 @@ export default function Barcodes() {
     },
   });
 
+  const clearBarcode = async (itemId: number) => {
+    setClearingId(itemId);
+    try {
+      const resp = await customFetch(`/api/items/${itemId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ barcode: null }),
+      });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error ?? "Request failed");
+      }
+      toast({ title: "Barcode cleared" });
+      refreshList();
+    } catch (err) {
+      toast({
+        title: "Could not clear barcode",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setClearingId(null);
+    }
+  };
+
   const printSelected = async () => {
     if (selected.size === 0) {
       toast({
@@ -258,19 +292,21 @@ export default function Barcodes() {
         title="Barcodes"
         description="Auto-generate, regenerate, and print Code 128 barcode labels for your items."
         actions={
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              onClick={() => assignMissing.mutate()}
-              disabled={assignMissing.isPending || missingCount === 0}
-              data-testid="btn-assign-missing-barcodes"
-            >
-              <Sparkles className="h-4 w-4 mr-2" />
-              {assignMissing.isPending
-                ? "Assigning…"
-                : `Assign missing (${missingCount})`}
-            </Button>
-          </div>
+          isAdmin ? (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={() => assignMissing.mutate()}
+                disabled={assignMissing.isPending || missingCount === 0}
+                data-testid="btn-assign-missing-barcodes"
+              >
+                <Sparkles className="h-4 w-4 mr-2" />
+                {assignMissing.isPending
+                  ? "Assigning…"
+                  : `Assign missing (${missingCount})`}
+              </Button>
+            </div>
+          ) : undefined
         }
       />
 
@@ -316,16 +352,18 @@ export default function Barcodes() {
               </SelectContent>
             </Select>
             <div className="md:ml-auto flex items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setImportOpen(true)}
-                disabled={isLoading}
-                data-testid="btn-barcode-import-open"
-              >
-                <Upload className="h-4 w-4 mr-2" />
-                Import
-              </Button>
+              {isAdmin && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setImportOpen(true)}
+                  disabled={isLoading}
+                  data-testid="btn-barcode-import-open"
+                >
+                  <Upload className="h-4 w-4 mr-2" />
+                  Import
+                </Button>
+              )}
               <ReportExportButton
                 filename="barcodes"
                 title="Barcodes Export"
@@ -455,57 +493,98 @@ export default function Barcodes() {
                       )}
                     </TableCell>
                     <TableCell className="text-right">
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            disabled={regenerate.isPending}
-                            data-testid={`btn-regenerate-barcode-${i.id}`}
-                          >
-                            <RefreshCw className="h-4 w-4 mr-1" />
-                            {i.barcode ? "Regenerate" : "Generate"}
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>
-                              {i.barcode
-                                ? "Regenerate barcode?"
-                                : "Generate barcode?"}
-                            </AlertDialogTitle>
-                            <AlertDialogDescription>
-                              {i.barcode ? (
-                                <>
-                                  This will issue a new auto-barcode for{" "}
-                                  <strong>{i.sku}</strong> and replace{" "}
-                                  <span className="font-mono">{i.barcode}</span>.
-                                  Any previously printed labels for this item
-                                  will no longer scan correctly.
-                                </>
-                              ) : (
-                                <>
-                                  This will issue a fresh auto-barcode for{" "}
-                                  <strong>{i.sku}</strong>.
-                                </>
-                              )}
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel
-                              data-testid={`btn-cancel-regenerate-barcode-${i.id}`}
-                            >
-                              Cancel
-                            </AlertDialogCancel>
-                            <AlertDialogAction
-                              onClick={() => regenerate.mutate({ id: i.id })}
-                              data-testid={`btn-confirm-regenerate-barcode-${i.id}`}
-                            >
-                              {i.barcode ? "Regenerate" : "Generate"}
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                      {isAdmin && (
+                        <div className="inline-flex items-center gap-1">
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={regenerate.isPending}
+                                data-testid={`btn-regenerate-barcode-${i.id}`}
+                              >
+                                <RefreshCw className="h-4 w-4 mr-1" />
+                                Edit Barcode
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>
+                                  {i.barcode
+                                    ? "Regenerate barcode?"
+                                    : "Generate barcode?"}
+                                </AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  {i.barcode ? (
+                                    <>
+                                      This will issue a new auto-barcode for{" "}
+                                      <strong>{i.sku}</strong> and replace{" "}
+                                      <span className="font-mono">{i.barcode}</span>.
+                                      Any previously printed labels for this item
+                                      will no longer scan correctly.
+                                    </>
+                                  ) : (
+                                    <>
+                                      This will issue a fresh auto-barcode for{" "}
+                                      <strong>{i.sku}</strong>.
+                                    </>
+                                  )}
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel
+                                  data-testid={`btn-cancel-regenerate-barcode-${i.id}`}
+                                >
+                                  Cancel
+                                </AlertDialogCancel>
+                                <AlertDialogAction
+                                  onClick={() => regenerate.mutate({ id: i.id })}
+                                  data-testid={`btn-confirm-regenerate-barcode-${i.id}`}
+                                >
+                                  {i.barcode ? "Regenerate" : "Generate"}
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                          {i.barcode && (
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={clearingId === i.id}
+                                  className="text-destructive hover:text-destructive"
+                                  data-testid={`btn-delete-barcode-${i.id}`}
+                                >
+                                  <Trash2 className="h-4 w-4 mr-1" />
+                                  Delete Barcode
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Delete barcode?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    This will permanently remove the barcode{" "}
+                                    <span className="font-mono">{i.barcode}</span>{" "}
+                                    from <strong>{i.sku}</strong>. Previously printed
+                                    labels will no longer scan correctly.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                    onClick={() => clearBarcode(i.id)}
+                                    data-testid={`btn-confirm-delete-barcode-${i.id}`}
+                                  >
+                                    Delete Barcode
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          )}
+                        </div>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
