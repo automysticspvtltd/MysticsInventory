@@ -37,6 +37,7 @@ import salesChannelDefaultsRouter from "./salesChannelDefaults";
 import adminRouter from "./admin";
 import posRouter from "./pos";
 import itemBarcodesRouter from "./itemBarcodes";
+import variantImportRouter from "./variantImport";
 
 const router: IRouter = Router();
 
@@ -69,6 +70,7 @@ router.use(warehousesRouter);
 // dedicated paths but live next to itemsRouter so the org-scoped
 // tenant middleware applies and a barcode can be looked up by id.
 router.use(itemBarcodesRouter);
+router.use(variantImportRouter);
 router.use(itemsRouter);
 router.use(posRouter);
 router.use(stockMovementsRouter);

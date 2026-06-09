@@ -347,6 +347,26 @@ export default function Settings() {
 
       <BarcodeSettingsCard />
 
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ScanLine className="h-5 w-5 text-primary" />
+            Barcode Labels
+          </CardTitle>
+          <CardDescription>
+            Configure logo and format for printed barcode labels (50 mm × 25 mm thermal).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Link href="/settings/barcode">
+            <Button variant="outline" className="w-full justify-between">
+              Open Label Settings
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </Link>
+        </CardContent>
+      </Card>
+
       <PosOrderDiscountCard />
 
       <SalesChannelWarehouseCard />

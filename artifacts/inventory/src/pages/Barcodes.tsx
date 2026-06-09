@@ -33,7 +33,6 @@ import {
   useGetCurrentOrganization,
   downloadItemBarcodeLabelsPdf,
   useGetMe,
-  customFetch,
 } from "@/lib/queryKeys";
 import { normalizeRole } from "@/lib/permissions";
 import {
@@ -47,7 +46,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Printer, RefreshCw, ScanLine, Sparkles, Trash2, Upload } from "lucide-react";
+import { Printer, RefreshCw, ScanLine, Sparkles, Upload } from "lucide-react";
 import { ReportExportButton, type ExportColumn } from "@/components/ReportExportButton";
 
 type FilterMode = "all" | "missing" | "auto" | "manual" | "mismatch";
@@ -73,7 +72,6 @@ export default function Barcodes() {
   const [filter, setFilter] = useState<FilterMode>("all");
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [copies, setCopies] = useState<number>(1);
-  const [clearingId, setClearingId] = useState<number | null>(null);
 
   const { data: me } = useGetMe();
   const isAdmin =
@@ -210,31 +208,6 @@ export default function Barcodes() {
       },
     },
   });
-
-  const clearBarcode = async (itemId: number) => {
-    setClearingId(itemId);
-    try {
-      const resp = await customFetch(`/api/items/${itemId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ barcode: null }),
-      });
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({}));
-        throw new Error((body as { error?: string }).error ?? "Request failed");
-      }
-      toast({ title: "Barcode cleared" });
-      refreshList();
-    } catch (err) {
-      toast({
-        title: "Could not clear barcode",
-        description: err instanceof Error ? err.message : "Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setClearingId(null);
-    }
-  };
 
   const printSelected = async () => {
     if (selected.size === 0) {
@@ -504,7 +477,7 @@ export default function Barcodes() {
                                 data-testid={`btn-regenerate-barcode-${i.id}`}
                               >
                                 <RefreshCw className="h-4 w-4 mr-1" />
-                                Edit Barcode
+                                {i.barcode ? "Regenerate Barcode" : "Generate Barcode"}
                               </Button>
                             </AlertDialogTrigger>
                             <AlertDialogContent>
@@ -546,43 +519,6 @@ export default function Barcodes() {
                               </AlertDialogFooter>
                             </AlertDialogContent>
                           </AlertDialog>
-                          {i.barcode && (
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  disabled={clearingId === i.id}
-                                  className="text-destructive hover:text-destructive"
-                                  data-testid={`btn-delete-barcode-${i.id}`}
-                                >
-                                  <Trash2 className="h-4 w-4 mr-1" />
-                                  Delete Barcode
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>Delete barcode?</AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    This will permanently remove the barcode{" "}
-                                    <span className="font-mono">{i.barcode}</span>{" "}
-                                    from <strong>{i.sku}</strong>. Previously printed
-                                    labels will no longer scan correctly.
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                  <AlertDialogAction
-                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                    onClick={() => clearBarcode(i.id)}
-                                    data-testid={`btn-confirm-delete-barcode-${i.id}`}
-                                  >
-                                    Delete Barcode
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          )}
                         </div>
                       )}
                     </TableCell>

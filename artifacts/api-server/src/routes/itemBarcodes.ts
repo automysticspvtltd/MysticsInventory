@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, eq, inArray } from "drizzle-orm";
 import PDFDocument from "pdfkit";
 import { z } from "zod/v4";
-import { db, itemsTable } from "@workspace/db";
+import { db, itemsTable, organizationsTable } from "@workspace/db";
 import { tenantMiddleware } from "../lib/tenant";
 import { renderBarcodePng, resolveBarcodeValue } from "../lib/barcode";
 
@@ -49,6 +49,13 @@ router.get("/items/:id/barcode.png", async (req, res, next) => {
   }
 });
 
+// 50 mm × 25 mm in PostScript points (1 pt = 1/72 inch; 1 mm = 2.8346 pt)
+const LABEL_W = 141.73; // 50 mm
+const LABEL_H = 70.87; // 25 mm
+const PAD_X = 5;
+const PAD_Y = 4;
+const INNER_W = LABEL_W - PAD_X * 2;
+
 router.get("/items/barcode-labels.pdf", async (req, res, next) => {
   try {
     const t = req.tenant!;
@@ -62,6 +69,7 @@ router.get("/items/barcode-labels.pdf", async (req, res, next) => {
       return;
     }
     const copies = clampInt(req.query.copies, 1, 1, 50);
+
     const rows = await db
       .select({
         id: itemsTable.id,
@@ -78,28 +86,55 @@ router.get("/items/barcode-labels.pdf", async (req, res, next) => {
           eq(itemsTable.organizationId, t.organizationId),
         ),
       );
+
     const byId = new Map(rows.map((r) => [r.id, r]));
-    // Preserve caller-specified order; skip any ids that don't belong to org.
     const ordered = ids
       .map((id) => byId.get(id))
       .filter(<T,>(x: T | undefined): x is T => Boolean(x));
+
     if (ordered.length === 0) {
       res.status(404).json({ error: "No matching items" });
       return;
     }
 
-    // Render all unique barcode PNGs once.
+    // Fetch org logo URL
+    let logoPng: Buffer | null = null;
+    {
+      const orgRows = await db
+        .select({ logoUrl: organizationsTable.logoUrl })
+        .from(organizationsTable)
+        .where(eq(organizationsTable.id, t.organizationId))
+        .limit(1);
+      const logoUrl = orgRows[0]?.logoUrl ?? null;
+      if (logoUrl && /^https?:\/\//i.test(logoUrl)) {
+        try {
+          const resp = await fetch(logoUrl, {
+            signal: AbortSignal.timeout(3000),
+          });
+          if (resp.ok) {
+            const ab = await resp.arrayBuffer();
+            logoPng = Buffer.from(ab);
+          }
+        } catch {
+          // Skip logo on fetch failure
+        }
+      }
+    }
+
+    // Pre-render barcode PNGs
     const pngCache = new Map<number, Buffer>();
     for (const item of ordered) {
       const value = resolveBarcodeValue(item);
-      const png = await renderBarcodePng(value, { scale: 2, height: 12 });
+      const png = await renderBarcodePng(value, { scale: 3, height: 20 });
       pngCache.set(item.id, png);
     }
 
-    // bufferPages: true lets us finalize pages explicitly and prevents
-    // pdfkit from auto-flushing pages mid-stream, which avoids the
-    // "blank trailing page" bug seen when cursor overflows a page.
-    const doc = new PDFDocument({ size: "A4", margin: 28, bufferPages: true });
+    const doc = new PDFDocument({
+      size: [LABEL_W, LABEL_H],
+      margin: 0,
+      bufferPages: true,
+    });
+
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader(
       "Content-Disposition",
@@ -107,98 +142,134 @@ router.get("/items/barcode-labels.pdf", async (req, res, next) => {
     );
     doc.pipe(res);
 
-    // 3 columns x 8 rows = 24 labels per A4 page (matches Avery L7160-ish).
-    const COLS = 3;
-    const ROWS = 8;
-    const pageW = 595.28;
-    const pageH = 841.89;
-    const margin = 28;
-    const cellW = (pageW - margin * 2) / COLS;
-    const cellH = (pageH - margin * 2) / ROWS;
-    const padX = 8;
-    const padY = 6;
-
-    let cellIndex = 0;
+    let firstPage = true;
     for (const item of ordered) {
       for (let c = 0; c < copies; c++) {
-        if (cellIndex > 0 && cellIndex % (COLS * ROWS) === 0) {
-          doc.addPage();
+        if (!firstPage) {
+          doc.addPage({ size: [LABEL_W, LABEL_H], margin: 0 });
         }
-        const localIdx = cellIndex % (COLS * ROWS);
-        const col = localIdx % COLS;
-        const row = Math.floor(localIdx / COLS);
-        const x = margin + col * cellW;
-        const y = margin + row * cellH;
+        firstPage = false;
+
         const png = pngCache.get(item.id)!;
-        const value = resolveBarcodeValue(item);
-        const innerW = cellW - padX * 2;
 
-        // Clip each label to its own cell rectangle so no content can
-        // overflow into adjacent cells or push pdfkit's cursor past the
-        // page boundary (which would trigger an unwanted blank page).
+        // Clip to page bounds
         doc.save();
-        doc.rect(x, y, cellW, cellH).clip();
+        doc.rect(0, 0, LABEL_W, LABEL_H).clip();
 
-        doc
-          .font("Helvetica-Bold")
-          .fontSize(8)
-          .fillColor("#0f172a")
-          .text(item.name.slice(0, 60), x + padX, y + padY, {
-            width: innerW,
-            ellipsis: true,
-            lineBreak: false,
-          });
+        let barcodeY: number;
 
+        if (logoPng) {
+          // Logo (12 × 12 pt) in top-left, item name to its right
+          try {
+            doc.image(logoPng, PAD_X, PAD_Y, { width: 12, height: 12 });
+          } catch {
+            // Skip logo if PDFKit can't read the image format
+          }
+          doc
+            .font("Helvetica-Bold")
+            .fontSize(7)
+            .fillColor("#000000")
+            .text(item.name.slice(0, 45), PAD_X + 14, PAD_Y + 2, {
+              width: INNER_W - 14,
+              lineBreak: false,
+              ellipsis: true,
+            });
+          barcodeY = PAD_Y + 14;
+        } else {
+          doc
+            .font("Helvetica-Bold")
+            .fontSize(7)
+            .fillColor("#000000")
+            .text(item.name.slice(0, 55), PAD_X, PAD_Y, {
+              width: INNER_W,
+              lineBreak: false,
+              ellipsis: true,
+            });
+          barcodeY = PAD_Y + 10;
+        }
+
+        // Price line sits near the bottom
+        const priceY = LABEL_H - PAD_Y - 9;
+        const barcodeH = priceY - barcodeY - 3;
+
+        // Barcode image (no value text — the bars speak for themselves)
         try {
-          doc.image(png, x + padX, y + padY + 12, {
-            fit: [innerW, cellH - padY * 2 - 36],
+          doc.image(png, PAD_X, barcodeY, {
+            fit: [INNER_W, barcodeH],
             align: "center",
           });
         } catch {
-          // Skip image if it fails — labels still print value text below.
+          // Skip image if it fails
         }
 
-        doc
-          .font("Helvetica")
-          .fontSize(7)
-          .fillColor("#334155")
-          .text(value, x + padX, y + cellH - padY - 16, {
-            width: innerW,
-            align: "center",
-            lineBreak: false,
-            ellipsis: true,
-          });
-
+        // Price line: MRP with strikethrough + Sale Price bold
         const mrpNum = Number(item.purchasePrice);
         const saleNum = Number(item.salePrice);
         const hasMrp = Number.isFinite(mrpNum) && mrpNum > 0;
         const hasSale = Number.isFinite(saleNum) && saleNum > 0;
-        if (hasMrp || hasSale) {
-          const priceParts: string[] = [];
-          if (hasMrp) priceParts.push(`MRP Rs.${mrpNum.toFixed(2)}`);
-          if (hasSale) priceParts.push(`Sale Rs.${saleNum.toFixed(2)}`);
+
+        if (hasMrp && hasSale) {
+          const mrpStr = `MRP \u20B9${mrpNum.toFixed(0)}`;
+          const saleStr = `  \u20B9${saleNum.toFixed(0)}`;
+
+          doc.font("Helvetica").fontSize(6).fillColor("#888888");
+          const mrpW = doc.widthOfString(mrpStr);
+
+          doc.font("Helvetica-Bold").fontSize(7).fillColor("#000000");
+          const saleW = doc.widthOfString(saleStr);
+
+          const totalW = mrpW + saleW;
+          const startX = PAD_X + Math.max(0, (INNER_W - totalW) / 2);
+
+          doc
+            .font("Helvetica")
+            .fontSize(6)
+            .fillColor("#888888")
+            .text(mrpStr, startX, priceY, { lineBreak: false });
+
+          // Strikethrough line over MRP text
+          doc
+            .moveTo(startX, priceY + 2.5)
+            .lineTo(startX + mrpW, priceY + 2.5)
+            .strokeColor("#888888")
+            .lineWidth(0.4)
+            .stroke();
+
           doc
             .font("Helvetica-Bold")
             .fontSize(7)
-            .fillColor("#0f172a")
-            .text(priceParts.join("  "), x + padX, y + cellH - padY - 8, {
-              width: innerW,
+            .fillColor("#000000")
+            .text(saleStr, startX + mrpW, priceY, { lineBreak: false });
+        } else if (hasMrp) {
+          const mrpStr = `MRP \u20B9${mrpNum.toFixed(0)}`;
+          doc
+            .font("Helvetica-Bold")
+            .fontSize(7)
+            .fillColor("#000000")
+            .text(mrpStr, PAD_X, priceY, {
+              width: INNER_W,
+              align: "center",
+              lineBreak: false,
+            });
+        } else if (hasSale) {
+          const saleStr = `\u20B9${saleNum.toFixed(0)}`;
+          doc
+            .font("Helvetica-Bold")
+            .fontSize(7)
+            .fillColor("#000000")
+            .text(saleStr, PAD_X, priceY, {
+              width: INNER_W,
               align: "center",
               lineBreak: false,
             });
         }
 
-        // Restore graphics state and reset cursor to the top of the
-        // current page so pdfkit cannot auto-insert a blank page.
         doc.restore();
-        doc.x = margin;
-        doc.y = margin;
-
-        cellIndex++;
+        doc.x = 0;
+        doc.y = 0;
       }
     }
 
-    // Flush buffered pages to the output stream then close the document.
     doc.flushPages();
     doc.end();
   } catch (err) {
@@ -227,7 +298,6 @@ router.post("/items/barcode-import", async (req, res, next) => {
     }
     const { rows } = parsed.data;
 
-    // Batch-fetch all items by SKU up front to avoid N+1.
     const skus = [...new Set(rows.map((r) => r.sku.trim()).filter(Boolean))];
     const existingItems = await db
       .select({ id: itemsTable.id, sku: itemsTable.sku })
@@ -247,7 +317,6 @@ router.post("/items/barcode-import", async (req, res, next) => {
     for (const row of rows) {
       const sku = row.sku.trim();
 
-      // Validate prices.
       let salePriceStr: string | undefined;
       let purchasePriceStr: string | undefined;
 
