@@ -16,10 +16,11 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { Link } from "wouter";
 import { ReportExportButton, type ExportColumn } from "@/components/ReportExportButton";
 import { Card, CardContent } from "@/components/ui/card";
+import { TablePagination } from "@/components/TablePagination";
 
 export default function ReportInventoryValuation() {
   const [showBatches, setShowBatches] = useState(false);
@@ -241,21 +242,7 @@ export default function ReportInventoryValuation() {
           </TableBody>
         </Table>
       </div>
-      {total > ITEMS_PER_PAGE && (
-        <div className="flex items-center justify-between px-2 py-3 border rounded-md bg-card">
-          <p className="text-sm text-muted-foreground">
-            Showing {(page - 1) * ITEMS_PER_PAGE + 1}–{Math.min(page * ITEMS_PER_PAGE, total)} of {total}
-          </p>
-          <div className="flex items-center gap-1">
-            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p - 1)} disabled={page === 1}>
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p + 1)} disabled={page * ITEMS_PER_PAGE >= total}>
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      )}
+      <TablePagination total={total} page={page} pageSize={ITEMS_PER_PAGE} onPageChange={setPage} />
     </div>
   );
 }

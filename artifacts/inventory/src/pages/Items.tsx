@@ -345,6 +345,9 @@ export default function Items() {
     (["owner", "admin", "manager"] as const).some((r) => r === normalizeRole(me?.role)) ||
     (me?.canEditStocks ?? false);
 
+  const canBulkDelete =
+    (["owner", "admin"] as const).some((r) => r === normalizeRole(me?.role));
+
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 500);
   // Warehouse picker — defaults to "all warehouses" but the last
@@ -426,6 +429,7 @@ export default function Items() {
   const ITEMS_PER_PAGE = 15;
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
   // The same scanner dialog is reused from two callsites: the search
   // bar (look up + navigate to the matched item) and the create/edit
   // form barcode field (write the scanned code into the form). Track
@@ -624,6 +628,29 @@ export default function Items() {
       },
     },
   });
+
+  const bulkDeleteMutation = useDeleteItem();
+
+  const handleBulkDelete = () => {
+    const ids = Array.from(selectedIds);
+    setSelectedIds(new Set());
+    setBulkDeleteConfirmOpen(false);
+    Promise.allSettled(ids.map((id) => bulkDeleteMutation.mutateAsync({ id }))).then(
+      (results) => {
+        queryClient.invalidateQueries({ queryKey: getListItemsQueryKey() });
+        const failed = results.filter((r) => r.status === "rejected").length;
+        const succeeded = ids.length - failed;
+        if (failed === 0) {
+          toast({ title: `${succeeded} item${succeeded === 1 ? "" : "s"} deleted` });
+        } else {
+          toast({
+            variant: "destructive",
+            title: `${succeeded} deleted, ${failed} could not be deleted`,
+          });
+        }
+      },
+    );
+  };
 
   const form = useForm<ItemFormValues>({
     resolver: zodResolver(itemSchema),
@@ -1025,6 +1052,17 @@ export default function Items() {
             >
               <Edit className="mr-2 h-4 w-4" />
               Edit ({selectedIds.size})
+            </Button>
+          )}
+          {selectedIds.size > 0 && canBulkDelete && (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setBulkDeleteConfirmOpen(true)}
+              data-testid="btn-bulk-delete-items"
+            >
+              <Trash2 className="mr-2 h-4 w-4" />
+              Delete ({selectedIds.size})
             </Button>
           )}
           <ReportExportButton
@@ -2172,6 +2210,33 @@ export default function Items() {
               disabled={deleteMutation.isPending}
             >
               {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={bulkDeleteConfirmOpen}
+        onOpenChange={(open) => !open && setBulkDeleteConfirmOpen(false)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete {selectedIds.size} item{selectedIds.size === 1 ? "" : "s"}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete {selectedIds.size} selected item
+              {selectedIds.size === 1 ? "" : "s"}. Items used in orders or with
+              variants cannot be deleted and will be reported as failures.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleBulkDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete {selectedIds.size} item{selectedIds.size === 1 ? "" : "s"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

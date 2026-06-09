@@ -12,7 +12,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
+import { TablePagination } from "@/components/TablePagination";
 
 export default function ReportStockWithJobWorkers() {
   const { data, isLoading } = useReportStockWithJobWorkers();
@@ -127,21 +128,7 @@ export default function ReportStockWithJobWorkers() {
               </CardContent>
             </Card>
           ))}
-          {totalGroups > ITEMS_PER_PAGE && (
-            <div className="flex items-center justify-between px-2 py-3 border rounded-md bg-card">
-              <p className="text-sm text-muted-foreground">
-                Showing {(page - 1) * ITEMS_PER_PAGE + 1}–{Math.min(page * ITEMS_PER_PAGE, totalGroups)} of {totalGroups} workers
-              </p>
-              <div className="flex items-center gap-1">
-                <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p - 1)} disabled={page === 1}>
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p + 1)} disabled={page * ITEMS_PER_PAGE >= totalGroups}>
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          )}
+          <TablePagination total={totalGroups} page={page} pageSize={ITEMS_PER_PAGE} onPageChange={setPage} itemLabel="workers" />
         </div>
       )}
     </div>

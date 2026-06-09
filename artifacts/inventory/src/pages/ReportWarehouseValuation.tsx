@@ -19,7 +19,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
+import { TablePagination } from "@/components/TablePagination";
 import { Link } from "wouter";
 import { ReportExportButton, type ExportColumn } from "@/components/ReportExportButton";
 
@@ -240,21 +241,7 @@ export default function ReportWarehouseValuation() {
           </TableBody>
         </Table>
       </div>
-      {totalGroups > GROUPS_PER_PAGE && (
-        <div className="flex items-center justify-between px-2 py-3 border rounded-md bg-card">
-          <p className="text-sm text-muted-foreground">
-            Showing warehouses {(page - 1) * GROUPS_PER_PAGE + 1}–{Math.min(page * GROUPS_PER_PAGE, totalGroups)} of {totalGroups}
-          </p>
-          <div className="flex items-center gap-1">
-            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p - 1)} disabled={page === 1}>
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p + 1)} disabled={page * GROUPS_PER_PAGE >= totalGroups}>
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      )}
+      <TablePagination total={totalGroups} page={page} pageSize={GROUPS_PER_PAGE} onPageChange={setPage} itemLabel="warehouses" />
     </div>
   );
 }

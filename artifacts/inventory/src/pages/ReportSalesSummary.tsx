@@ -3,7 +3,8 @@ import { useGetSalesSummaryReport, useListCustomers, useListWarehouses } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatCurrency } from "@/lib/format";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
+import { TablePagination } from "@/components/TablePagination";
 import { Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -218,21 +219,7 @@ export default function ReportSalesSummary() {
           </Table>
         </CardContent>
       </Card>
-      {report.byCustomer.length > ITEMS_PER_PAGE && (
-        <div className="flex items-center justify-between px-2 py-3 border rounded-md bg-card">
-          <p className="text-sm text-muted-foreground">
-            Showing {(page - 1) * ITEMS_PER_PAGE + 1}–{Math.min(page * ITEMS_PER_PAGE, report.byCustomer.length)} of {report.byCustomer.length}
-          </p>
-          <div className="flex items-center gap-1">
-            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p - 1)} disabled={page === 1}>
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage(p => p + 1)} disabled={page * ITEMS_PER_PAGE >= report.byCustomer.length}>
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      )}
+      <TablePagination total={report.byCustomer.length} page={page} pageSize={ITEMS_PER_PAGE} onPageChange={setPage} itemLabel="customers" />
     </div>
   );
 }
