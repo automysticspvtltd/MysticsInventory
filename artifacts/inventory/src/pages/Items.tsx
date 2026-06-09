@@ -95,7 +95,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useDebounce } from "@/hooks/use-debounce";
 import { Item, useGetMe } from "@/lib/queryKeys";
-import { BulkImportVariantsDialog } from "@/components/BulkImportVariantsDialog";
 import { normalizeRole } from "@/lib/permissions";
 import { ImageUploader } from "@/components/ImageUploader";
 import { useImageSrc } from "@/hooks/use-image-src";
@@ -418,7 +417,6 @@ export default function Items() {
   const [deleteDialogItem, setDeleteDialogItem] = useState<Item | null>(null);
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
-  const [variantImportOpen, setVariantImportOpen] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<string>("");
   const [stockFilter, setStockFilter] = useState<"all" | "in-stock" | "low-stock" | "out-of-stock">("all");
   const [priceMin, setPriceMin] = useState<string>("");
@@ -505,51 +503,6 @@ export default function Items() {
     return map;
   }, [allItemsForOptions]);
 
-  const variantExportRows = useMemo(
-    () => (allItemsForOptions ?? []).filter((i) => i.parentItemId != null),
-    [allItemsForOptions],
-  );
-
-  const variantExportColumns = useMemo(
-    (): ExportColumn<Item>[] => [
-      {
-        header: "Parent Item",
-        accessor: (i) => parentInfoMap.get(i.parentItemId!)?.sku ?? "",
-      },
-      { header: "Variant Name", accessor: (i) => i.name },
-      { header: "SKU", accessor: (i) => i.sku },
-      { header: "Barcode", accessor: (i) => i.barcode ?? "" },
-      { header: "MRP", accessor: (i) => i.purchasePrice },
-      { header: "Sale Price", accessor: (i) => i.salePrice },
-      { header: "Stock", accessor: (i) => String(i.totalStock ?? 0) },
-      {
-        header: "Attribute 1",
-        accessor: (i) => {
-          const axes = parentInfoMap.get(i.parentItemId!)?.axes ?? [];
-          const opts = (i.variantOptions as Record<string, string> | null) ?? {};
-          return axes[0] ? (opts[axes[0]] ?? "") : "";
-        },
-      },
-      {
-        header: "Attribute 2",
-        accessor: (i) => {
-          const axes = parentInfoMap.get(i.parentItemId!)?.axes ?? [];
-          const opts = (i.variantOptions as Record<string, string> | null) ?? {};
-          return axes[1] ? (opts[axes[1]] ?? "") : "";
-        },
-      },
-      {
-        header: "Attribute 3",
-        accessor: (i) => {
-          const axes = parentInfoMap.get(i.parentItemId!)?.axes ?? [];
-          const opts = (i.variantOptions as Record<string, string> | null) ?? {};
-          return axes[2] ? (opts[axes[2]] ?? "") : "";
-        },
-      },
-    ],
-    [parentInfoMap],
-  );
-
   const exportColumns = useMemo(
     (): ExportColumn<Item>[] => [
       { header: "Name", accessor: (r) => r.name },
@@ -567,16 +520,51 @@ export default function Items() {
       { header: "Max Discount (₹)", accessor: (r) => r.maxDiscountAmount ?? "" },
       { header: "Total Stock", accessor: (r) => r.totalStock },
       { header: "Image URL", accessor: (r) => r.imageUrl ?? "" },
+      {
+        header: "Parent Item",
+        accessor: (r) =>
+          r.parentItemId != null
+            ? (parentInfoMap.get(r.parentItemId)?.sku ?? "")
+            : "",
+      },
+      {
+        header: "Attribute 1",
+        accessor: (r) => {
+          if (r.parentItemId == null) return "";
+          const axes = parentInfoMap.get(r.parentItemId)?.axes ?? [];
+          const opts =
+            (r.variantOptions as Record<string, string> | null) ?? {};
+          return axes[0] ? (opts[axes[0]] ?? "") : "";
+        },
+      },
+      {
+        header: "Attribute 2",
+        accessor: (r) => {
+          if (r.parentItemId == null) return "";
+          const axes = parentInfoMap.get(r.parentItemId)?.axes ?? [];
+          const opts =
+            (r.variantOptions as Record<string, string> | null) ?? {};
+          return axes[1] ? (opts[axes[1]] ?? "") : "";
+        },
+      },
+      {
+        header: "Attribute 3",
+        accessor: (r) => {
+          if (r.parentItemId == null) return "";
+          const axes = parentInfoMap.get(r.parentItemId)?.axes ?? [];
+          const opts =
+            (r.variantOptions as Record<string, string> | null) ?? {};
+          return axes[2] ? (opts[axes[2]] ?? "") : "";
+        },
+      },
     ],
-    [],
+    [parentInfoMap],
   );
 
-  const exportRows = useMemo(() => {
-    if (selectedIds.size > 0) {
-      return filteredTopLevel.filter((i) => selectedIds.has(i.id));
-    }
-    return filteredTopLevel;
-  }, [filteredTopLevel, selectedIds]);
+  const exportRows = useMemo(
+    () => allItemsForOptions ?? [],
+    [allItemsForOptions],
+  );
 
   const createMutation = useCreateItem({
     mutation: {
@@ -894,19 +882,11 @@ export default function Items() {
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
-              onClick={() => setVariantImportOpen(true)}
-              data-testid="btn-variant-import-items"
-            >
-              <Upload className="mr-2 h-4 w-4" />
-              Import variants
-            </Button>
-            <Button
-              variant="outline"
               onClick={() => setBulkImportOpen(true)}
               data-testid="btn-bulk-import-items"
             >
               <Upload className="mr-2 h-4 w-4" />
-              Bulk import
+              Import
             </Button>
             <Button onClick={handleCreate} data-testid="btn-create-item">
               <Plus className="mr-2 h-4 w-4" />
@@ -918,10 +898,6 @@ export default function Items() {
       <BulkImportItemsDialog
         open={bulkImportOpen}
         onOpenChange={setBulkImportOpen}
-      />
-      <BulkImportVariantsDialog
-        open={variantImportOpen}
-        onOpenChange={setVariantImportOpen}
       />
       <BulkEditItemsDialog
         open={bulkEditOpen}
@@ -1034,12 +1010,6 @@ export default function Items() {
             filename="items"
             columns={exportColumns}
             rows={exportRows}
-            hidePdf
-          />
-          <ReportExportButton
-            filename="variant-items"
-            columns={variantExportColumns}
-            rows={variantExportRows}
             hidePdf
           />
           <Store className="h-4 w-4 text-muted-foreground" />

@@ -1,0 +1,902 @@
+import { Router, type IRouter } from "express";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import {
+  db,
+  itemsTable,
+  itemWarehouseStockTable,
+  stockMovementsTable,
+  warehousesTable,
+} from "@workspace/db";
+import { tenantMiddleware } from "../lib/tenant";
+import { toStr, toNum } from "../lib/numeric";
+import {
+  generateUniqueBarcode,
+  isBarcodeUniqueViolation,
+} from "../lib/barcodeGen";
+
+const router: IRouter = Router();
+router.use(tenantMiddleware);
+
+type UnifiedResultRow = {
+  index: number;
+  sku: string;
+  parentSku: string;
+  rowType: "simple" | "variant";
+  action: "create" | "update" | "skip" | "error";
+  error?: string;
+};
+
+type SimpleParsed = {
+  index: number;
+  sku: string;
+  name: string;
+  description: string | null;
+  category: string | null;
+  unit: string;
+  barcode: string | null;
+  salePrice: number;
+  purchasePrice: number;
+  hsnCode: string | null;
+  taxRate: number;
+  reorderLevel: number;
+  imageUrl: string | null;
+  totalStock: number | null;
+  maxDiscountPercent: number | null;
+  maxDiscountAmount: number | null;
+};
+
+type VariantParsed = {
+  index: number;
+  parentSku: string;
+  variantName: string;
+  sku: string;
+  barcode: string | null;
+  salePrice: number;
+  purchasePrice: number;
+  totalStock: number | null;
+  attr1: string;
+  attr2: string;
+  attr3: string;
+};
+
+function fStr(v: unknown): string {
+  return typeof v === "string" ? v.trim() : String(v ?? "").trim();
+}
+
+function oStr(v: unknown): string | null {
+  const s = fStr(v);
+  return s === "" ? null : s;
+}
+
+function pNum(
+  v: unknown,
+  fallback = 0,
+): { ok: true; value: number } | { ok: false } {
+  if (v == null || v === "") return { ok: true, value: fallback };
+  const n = Number(v);
+  if (!Number.isFinite(n)) return { ok: false };
+  return { ok: true, value: n };
+}
+
+const MAX_ROWS = 1000;
+const MAX_RETRIES = 3;
+
+router.post("/items/unified-bulk-import", async (req, res, next) => {
+  try {
+    const t = req.tenant!;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const dryRun = !!body.dryRun;
+    const mode: "create" | "upsert" =
+      body.mode === "upsert" ? "upsert" : "create";
+    const rawRows = Array.isArray(body.rows) ? body.rows : null;
+
+    if (!rawRows) {
+      res.status(400).json({ error: "rows must be an array" });
+      return;
+    }
+    if (rawRows.length === 0) {
+      res.status(400).json({ error: "rows is empty" });
+      return;
+    }
+    if (rawRows.length > MAX_ROWS) {
+      res
+        .status(400)
+        .json({ error: `Maximum ${MAX_ROWS} rows per import` });
+      return;
+    }
+
+    const results: UnifiedResultRow[] = [];
+    const simpleParsed: (SimpleParsed | null)[] = [];
+    const variantParsed: (VariantParsed | null)[] = [];
+    const simpleResultIdx: number[] = [];
+    const variantResultIdx: number[] = [];
+    const seenSkus = new Map<string, number>();
+
+    for (let i = 0; i < rawRows.length; i++) {
+      const idx = i + 1;
+      const r = (rawRows[i] as Record<string, unknown>) ?? {};
+      const sku = fStr(r.sku);
+      const parentSku = fStr(r.parentSku);
+      const isVariant = parentSku.length > 0;
+
+      const fail = (error: string) => {
+        results.push({
+          index: idx,
+          sku,
+          parentSku,
+          rowType: isVariant ? "variant" : "simple",
+          action: "error",
+          error,
+        });
+        if (isVariant) {
+          variantParsed.push(null);
+          variantResultIdx.push(results.length - 1);
+        } else {
+          simpleParsed.push(null);
+          simpleResultIdx.push(results.length - 1);
+        }
+      };
+
+      if (!sku) {
+        fail("SKU is required");
+        continue;
+      }
+      if (sku.length > 100) {
+        fail("SKU must be ≤100 characters");
+        continue;
+      }
+      const seenAt = seenSkus.get(sku);
+      if (seenAt != null) {
+        fail(`Duplicate SKU in upload (also on row ${seenAt})`);
+        continue;
+      }
+      seenSkus.set(sku, idx);
+
+      if (isVariant) {
+        // ── Variant row ────────────────────────────────────────────
+        const saleP = pNum(r.salePrice);
+        if (!saleP.ok) {
+          fail("Sale Price is not a valid number");
+          continue;
+        }
+        const purchP = pNum(r.purchasePrice);
+        if (!purchP.ok) {
+          fail("MRP is not a valid number");
+          continue;
+        }
+        if (saleP.value < 0 || purchP.value < 0) {
+          fail("Prices cannot be negative");
+          continue;
+        }
+        let totalStock: number | null = null;
+        if (r.totalStock != null && r.totalStock !== "") {
+          const ts = pNum(r.totalStock);
+          if (!ts.ok) {
+            fail("Stock is not a valid number");
+            continue;
+          }
+          if (ts.value < 0) {
+            fail("Stock cannot be negative");
+            continue;
+          }
+          totalStock = ts.value;
+        }
+        const barcode = oStr(r.barcode);
+        if (barcode !== null && barcode.length > 64) {
+          fail("Barcode too long (max 64)");
+          continue;
+        }
+        variantParsed.push({
+          index: idx,
+          parentSku,
+          variantName: fStr(r.variantName),
+          sku,
+          barcode,
+          salePrice: saleP.value,
+          purchasePrice: purchP.value,
+          totalStock,
+          attr1: fStr(r.attr1),
+          attr2: fStr(r.attr2),
+          attr3: fStr(r.attr3),
+        });
+        variantResultIdx.push(results.length);
+        results.push({
+          index: idx,
+          sku,
+          parentSku,
+          rowType: "variant",
+          action: "create",
+        });
+      } else {
+        // ── Simple row ─────────────────────────────────────────────
+        const name = fStr(r.name);
+        if (!name) {
+          fail("Name is required");
+          continue;
+        }
+        if (name.length > 200) {
+          fail("Name must be ≤200 characters");
+          continue;
+        }
+        const saleP = pNum(r.salePrice);
+        if (!saleP.ok) {
+          fail("Sale Price is not a number");
+          continue;
+        }
+        const purchP = pNum(r.purchasePrice);
+        if (!purchP.ok) {
+          fail("MRP is not a number");
+          continue;
+        }
+        const taxP = pNum(r.taxRate);
+        if (!taxP.ok) {
+          fail("Tax Rate is not a number");
+          continue;
+        }
+        const reorderP = pNum(r.reorderLevel);
+        if (!reorderP.ok) {
+          fail("Min Stock Level is not a number");
+          continue;
+        }
+        if (saleP.value < 0 || purchP.value < 0 || reorderP.value < 0) {
+          fail("Prices and reorder level cannot be negative");
+          continue;
+        }
+        if (taxP.value < 0 || taxP.value > 100) {
+          fail("Tax Rate must be 0–100");
+          continue;
+        }
+        const unit = fStr(r.unit) || "pcs";
+        const description = oStr(r.description);
+        const category = oStr(r.category);
+        const hsnCode = oStr(r.hsnCode);
+        const barcode = oStr(r.barcode);
+        if (description !== null && description.length > 2000) {
+          fail("Description too long (max 2000)");
+          continue;
+        }
+        if (category !== null && category.length > 100) {
+          fail("Category too long (max 100)");
+          continue;
+        }
+        if (hsnCode !== null && hsnCode.length > 32) {
+          fail("HSN Code too long (max 32)");
+          continue;
+        }
+        if (unit.length > 32) {
+          fail("Unit too long (max 32)");
+          continue;
+        }
+        if (barcode !== null && barcode.length > 64) {
+          fail("Barcode too long (max 64)");
+          continue;
+        }
+        let totalStock: number | null = null;
+        if (r.totalStock != null && r.totalStock !== "") {
+          const ts = pNum(r.totalStock);
+          if (!ts.ok) {
+            fail("Total Stock is not a number");
+            continue;
+          }
+          if (ts.value < 0) {
+            fail("Total Stock cannot be negative");
+            continue;
+          }
+          totalStock = ts.value;
+        }
+        const imageUrl = (() => {
+          const raw = fStr(r.imageUrl);
+          if (!raw) return null;
+          try {
+            new URL(raw);
+          } catch {
+            return null;
+          }
+          if (raw.length > 2048) return null;
+          return raw;
+        })();
+        let maxDiscountPercent: number | null = null;
+        if (r.maxDiscountPercent != null && r.maxDiscountPercent !== "") {
+          const p = pNum(r.maxDiscountPercent);
+          if (!p.ok) {
+            fail("Max Discount % is not a number");
+            continue;
+          }
+          if (p.value < 0 || p.value > 100) {
+            fail("Max Discount % must be 0–100");
+            continue;
+          }
+          maxDiscountPercent = p.value;
+        }
+        let maxDiscountAmount: number | null = null;
+        if (r.maxDiscountAmount != null && r.maxDiscountAmount !== "") {
+          const p = pNum(r.maxDiscountAmount);
+          if (!p.ok) {
+            fail("Max Discount ₹ is not a number");
+            continue;
+          }
+          if (p.value < 0) {
+            fail("Max Discount ₹ cannot be negative");
+            continue;
+          }
+          maxDiscountAmount = p.value;
+        }
+        simpleParsed.push({
+          index: idx,
+          sku,
+          name,
+          description,
+          category,
+          unit,
+          barcode,
+          salePrice: saleP.value,
+          purchasePrice: purchP.value,
+          hsnCode,
+          taxRate: taxP.value,
+          reorderLevel: reorderP.value,
+          imageUrl,
+          totalStock,
+          maxDiscountPercent,
+          maxDiscountAmount,
+        });
+        simpleResultIdx.push(results.length);
+        results.push({
+          index: idx,
+          sku,
+          parentSku: "",
+          rowType: "simple",
+          action: "create",
+        });
+      }
+    }
+
+    // ── Validate simple rows against existing SKUs ──────────────────
+    const simpleSkus = simpleParsed
+      .filter((p): p is SimpleParsed => p !== null)
+      .map((p) => p.sku);
+    type ExistingSimple = {
+      id: number;
+      hasVariants: boolean;
+      isBundle: boolean;
+      parentItemId: number | null;
+      trackBatches: boolean;
+    };
+    const existingSimpleMap = new Map<string, ExistingSimple>();
+    if (simpleSkus.length > 0) {
+      const rows = await db
+        .select({
+          id: itemsTable.id,
+          sku: itemsTable.sku,
+          hasVariants: itemsTable.hasVariants,
+          isBundle: itemsTable.isBundle,
+          parentItemId: itemsTable.parentItemId,
+          trackBatches: itemsTable.trackBatches,
+        })
+        .from(itemsTable)
+        .where(
+          and(
+            eq(itemsTable.organizationId, t.organizationId),
+            inArray(itemsTable.sku, simpleSkus),
+            sql`${itemsTable.archivedAt} IS NULL`,
+          ),
+        );
+      for (const e of rows)
+        existingSimpleMap.set(e.sku, {
+          id: e.id,
+          hasVariants: e.hasVariants,
+          isBundle: e.isBundle,
+          parentItemId: e.parentItemId,
+          trackBatches: e.trackBatches,
+        });
+    }
+    for (let j = 0; j < simpleParsed.length; j++) {
+      const p = simpleParsed[j];
+      if (!p) continue;
+      const ri = simpleResultIdx[j];
+      const existing = existingSimpleMap.get(p.sku);
+      if (!existing) {
+        results[ri] = { ...results[ri], action: "create" };
+        continue;
+      }
+      if (mode === "create") {
+        results[ri] = {
+          ...results[ri],
+          action: "error",
+          error:
+            "SKU already exists. Choose Upsert mode to update existing items.",
+        };
+        simpleParsed[j] = null;
+        continue;
+      }
+      if (
+        existing.hasVariants ||
+        existing.isBundle ||
+        existing.parentItemId != null ||
+        existing.trackBatches
+      ) {
+        results[ri] = {
+          ...results[ri],
+          action: "error",
+          error:
+            "Existing item is a variant, bundle, or batch-tracked — edit it individually.",
+        };
+        simpleParsed[j] = null;
+        continue;
+      }
+      results[ri] = { ...results[ri], action: "update" };
+    }
+
+    // ── Validate variant rows against parent items ──────────────────
+    const uniqueParentSkus = [
+      ...new Set(
+        variantParsed
+          .filter((p): p is VariantParsed => p !== null)
+          .map((p) => p.parentSku),
+      ),
+    ];
+    type ParentInfo = {
+      id: number;
+      name: string;
+      sku: string;
+      hasVariants: boolean;
+      axes: string[];
+      unit: string;
+      category: string | null;
+      hsnCode: string | null;
+      taxRate: string | null;
+    };
+    const parentMap = new Map<string, ParentInfo>();
+    if (uniqueParentSkus.length > 0) {
+      const parents = await db
+        .select({
+          id: itemsTable.id,
+          sku: itemsTable.sku,
+          name: itemsTable.name,
+          hasVariants: itemsTable.hasVariants,
+          variantOptions: itemsTable.variantOptions,
+          unit: itemsTable.unit,
+          category: itemsTable.category,
+          hsnCode: itemsTable.hsnCode,
+          taxRate: itemsTable.taxRate,
+        })
+        .from(itemsTable)
+        .where(
+          and(
+            eq(itemsTable.organizationId, t.organizationId),
+            inArray(itemsTable.sku, uniqueParentSkus),
+            sql`${itemsTable.archivedAt} IS NULL`,
+          ),
+        );
+      for (const p of parents) {
+        const opts = p.variantOptions as { axes?: string[] } | null;
+        parentMap.set(p.sku, {
+          id: p.id,
+          name: p.name,
+          sku: p.sku,
+          hasVariants: p.hasVariants,
+          axes: Array.isArray(opts?.axes) ? opts!.axes : [],
+          unit: p.unit,
+          category: p.category,
+          hsnCode: p.hsnCode,
+          taxRate: p.taxRate,
+        });
+      }
+    }
+    const variantCandidateSkus = variantParsed
+      .filter((p): p is VariantParsed => p !== null)
+      .map((p) => p.sku);
+    const existingVariantSet = new Set<string>();
+    if (variantCandidateSkus.length > 0) {
+      const existing = await db
+        .select({ sku: itemsTable.sku })
+        .from(itemsTable)
+        .where(
+          and(
+            eq(itemsTable.organizationId, t.organizationId),
+            inArray(itemsTable.sku, variantCandidateSkus),
+            sql`${itemsTable.archivedAt} IS NULL`,
+          ),
+        );
+      for (const e of existing) existingVariantSet.add(e.sku);
+    }
+    for (let j = 0; j < variantParsed.length; j++) {
+      const p = variantParsed[j];
+      if (!p) continue;
+      const ri = variantResultIdx[j];
+      const parent = parentMap.get(p.parentSku);
+      if (!parent) {
+        results[ri] = {
+          ...results[ri],
+          action: "error",
+          error: `Parent item "${p.parentSku}" not found`,
+        };
+        variantParsed[j] = null;
+        continue;
+      }
+      if (!parent.hasVariants) {
+        results[ri] = {
+          ...results[ri],
+          action: "error",
+          error: `"${p.parentSku}" is not a variant parent. Enable "Has Variants" on it first.`,
+        };
+        variantParsed[j] = null;
+        continue;
+      }
+      if (parent.axes.length === 0) {
+        results[ri] = {
+          ...results[ri],
+          action: "error",
+          error: `"${p.parentSku}" has no variant axes. Add axes (e.g. Color, Size) first.`,
+        };
+        variantParsed[j] = null;
+        continue;
+      }
+      if (existingVariantSet.has(p.sku)) {
+        results[ri] = {
+          ...results[ri],
+          action: "skip",
+          error: "SKU already exists — skipped",
+        };
+        variantParsed[j] = null;
+      }
+    }
+
+    const counts = {
+      create: results.filter((r) => r.action === "create").length,
+      update: results.filter((r) => r.action === "update").length,
+      skip: results.filter((r) => r.action === "skip").length,
+      error: results.filter((r) => r.action === "error").length,
+    };
+
+    if (dryRun || counts.error > 0) {
+      res.status(counts.error > 0 ? 400 : 200).json({ results, counts });
+      return;
+    }
+
+    // ── Pre-flight barcode uniqueness for simple CREATE/UPDATE rows ──
+    {
+      const seenBarcodes = new Map<string, number>();
+      const userBarcodes: string[] = [];
+      for (let j = 0; j < simpleParsed.length; j++) {
+        const p = simpleParsed[j];
+        if (!p || !p.barcode) continue;
+        const ri = simpleResultIdx[j];
+        const seenAt = seenBarcodes.get(p.barcode);
+        if (seenAt !== undefined) {
+          results[ri] = {
+            ...results[ri],
+            action: "error",
+            error: `Duplicate barcode in upload (also on row ${seenAt})`,
+          };
+          simpleParsed[j] = null;
+          continue;
+        }
+        seenBarcodes.set(p.barcode, p.index);
+        userBarcodes.push(p.barcode);
+      }
+      if (userBarcodes.length > 0) {
+        const taken = await db
+          .select({
+            id: itemsTable.id,
+            sku: itemsTable.sku,
+            barcode: itemsTable.barcode,
+          })
+          .from(itemsTable)
+          .where(
+            and(
+              eq(itemsTable.organizationId, t.organizationId),
+              inArray(itemsTable.barcode, userBarcodes),
+              sql`${itemsTable.archivedAt} IS NULL`,
+            ),
+          );
+        const takenMap = new Map(taken.map((r): [string, typeof r] => [r.barcode!, r]));
+        for (let j = 0; j < simpleParsed.length; j++) {
+          const p = simpleParsed[j];
+          if (!p || !p.barcode) continue;
+          const ri = simpleResultIdx[j];
+          const owner = takenMap.get(p.barcode);
+          if (!owner) continue;
+          if (results[ri].action === "update") {
+            const e = existingSimpleMap.get(p.sku);
+            if (e && e.id === owner.id) continue;
+          }
+          results[ri] = {
+            ...results[ri],
+            action: "error",
+            error: `Barcode "${p.barcode}" is already used by ${owner.sku}`,
+          };
+          simpleParsed[j] = null;
+        }
+      }
+      counts.create = results.filter((r) => r.action === "create").length;
+      counts.update = results.filter((r) => r.action === "update").length;
+      counts.error = results.filter((r) => r.action === "error").length;
+      if (counts.error > 0) {
+        res.status(400).json({ results, counts });
+        return;
+      }
+    }
+
+    // ── Fetch primary warehouse ─────────────────────────────────────
+    let primaryWarehouseId: number | null = null;
+    {
+      const wh = await db
+        .select({ id: warehousesTable.id })
+        .from(warehousesTable)
+        .where(
+          and(
+            eq(warehousesTable.organizationId, t.organizationId),
+            eq(warehousesTable.isVirtual, false),
+          ),
+        )
+        .orderBy(asc(warehousesTable.id))
+        .limit(1);
+      primaryWarehouseId = wh[0]?.id ?? null;
+    }
+
+    // ── Pre-fetch stock for upsert rows ─────────────────────────────
+    const preStockMap = new Map<number, number>();
+    {
+      const ids: number[] = [];
+      for (let j = 0; j < simpleParsed.length; j++) {
+        const p = simpleParsed[j];
+        if (!p || results[simpleResultIdx[j]].action !== "update" || p.totalStock === null) continue;
+        const e = existingSimpleMap.get(p.sku);
+        if (e) ids.push(e.id);
+      }
+      if (ids.length > 0) {
+        const rows = await db
+          .select({
+            itemId: itemWarehouseStockTable.itemId,
+            qty: sql<string>`COALESCE(SUM(${itemWarehouseStockTable.quantity}), 0)`,
+          })
+          .from(itemWarehouseStockTable)
+          .where(
+            and(
+              eq(itemWarehouseStockTable.organizationId, t.organizationId),
+              inArray(itemWarehouseStockTable.itemId, ids),
+            ),
+          )
+          .groupBy(itemWarehouseStockTable.itemId);
+        for (const r of rows) preStockMap.set(r.itemId, toNum(r.qty));
+      }
+    }
+
+    // ── Commit ──────────────────────────────────────────────────────
+    let committed = false;
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        await db.transaction(async (tx) => {
+          // Simple rows
+          for (let j = 0; j < simpleParsed.length; j++) {
+            const p = simpleParsed[j];
+            if (!p) continue;
+            const ri = simpleResultIdx[j];
+            if (results[ri].action === "create") {
+              let bc: string | null = p.barcode;
+              let bcSrc: "manual" | "auto" = "manual";
+              if (bc === null) {
+                bc = await generateUniqueBarcode(t.organizationId, tx);
+                bcSrc = "auto";
+              }
+              const [created] = await tx
+                .insert(itemsTable)
+                .values({
+                  organizationId: t.organizationId,
+                  sku: p.sku,
+                  name: p.name,
+                  description: p.description,
+                  category: p.category,
+                  unit: p.unit,
+                  barcode: bc,
+                  barcodeSource: bcSrc,
+                  salePrice: toStr(p.salePrice),
+                  purchasePrice: toStr(p.purchasePrice),
+                  hsnCode: p.hsnCode,
+                  taxRate: toStr(p.taxRate),
+                  reorderLevel: toStr(p.reorderLevel),
+                })
+                .returning({ id: itemsTable.id });
+              if (
+                p.totalStock !== null &&
+                p.totalStock > 0 &&
+                primaryWarehouseId !== null
+              ) {
+                await tx.insert(itemWarehouseStockTable).values({
+                  organizationId: t.organizationId,
+                  itemId: created.id,
+                  warehouseId: primaryWarehouseId,
+                  quantity: toStr(p.totalStock),
+                });
+                await tx.insert(stockMovementsTable).values({
+                  organizationId: t.organizationId,
+                  itemId: created.id,
+                  warehouseId: primaryWarehouseId,
+                  movementType: "adjustment",
+                  quantity: toStr(p.totalStock),
+                  notes: "Unified bulk import",
+                });
+              }
+            } else if (results[ri].action === "update") {
+              const existing = existingSimpleMap.get(p.sku)!;
+              const barcodeUpdate =
+                p.barcode === null
+                  ? {}
+                  : { barcode: p.barcode, barcodeSource: "manual" as const };
+              await tx
+                .update(itemsTable)
+                .set({
+                  name: p.name,
+                  description: p.description,
+                  category: p.category,
+                  unit: p.unit,
+                  ...barcodeUpdate,
+                  salePrice: toStr(p.salePrice),
+                  purchasePrice: toStr(p.purchasePrice),
+                  hsnCode: p.hsnCode,
+                  taxRate: toStr(p.taxRate),
+                  reorderLevel: toStr(p.reorderLevel),
+                  imageUrl: p.imageUrl,
+                  maxDiscountPercent:
+                    p.maxDiscountPercent != null
+                      ? toStr(p.maxDiscountPercent)
+                      : null,
+                  maxDiscountAmount:
+                    p.maxDiscountAmount != null
+                      ? toStr(p.maxDiscountAmount)
+                      : null,
+                  updatedAt: new Date(),
+                })
+                .where(
+                  and(
+                    eq(itemsTable.id, existing.id),
+                    eq(itemsTable.organizationId, t.organizationId),
+                  ),
+                );
+              if (p.totalStock !== null && primaryWarehouseId !== null) {
+                const currentQty = preStockMap.get(existing.id) ?? 0;
+                const delta = p.totalStock - currentQty;
+                if (delta !== 0) {
+                  const stockRow = await tx
+                    .select({
+                      id: itemWarehouseStockTable.id,
+                      quantity: itemWarehouseStockTable.quantity,
+                    })
+                    .from(itemWarehouseStockTable)
+                    .where(
+                      and(
+                        eq(
+                          itemWarehouseStockTable.organizationId,
+                          t.organizationId,
+                        ),
+                        eq(itemWarehouseStockTable.itemId, existing.id),
+                        eq(
+                          itemWarehouseStockTable.warehouseId,
+                          primaryWarehouseId,
+                        ),
+                      ),
+                    )
+                    .limit(1);
+                  if (stockRow[0]) {
+                    await tx
+                      .update(itemWarehouseStockTable)
+                      .set({
+                        quantity: toStr(
+                          toNum(stockRow[0].quantity) + delta,
+                        ),
+                      })
+                      .where(
+                        and(
+                          eq(
+                            itemWarehouseStockTable.organizationId,
+                            t.organizationId,
+                          ),
+                          eq(itemWarehouseStockTable.id, stockRow[0].id),
+                        ),
+                      );
+                  } else {
+                    await tx.insert(itemWarehouseStockTable).values({
+                      organizationId: t.organizationId,
+                      itemId: existing.id,
+                      warehouseId: primaryWarehouseId,
+                      quantity: toStr(p.totalStock),
+                    });
+                  }
+                  await tx.insert(stockMovementsTable).values({
+                    organizationId: t.organizationId,
+                    itemId: existing.id,
+                    warehouseId: primaryWarehouseId,
+                    movementType: "adjustment",
+                    quantity: toStr(delta),
+                    notes: "Unified bulk import",
+                  });
+                }
+              }
+            }
+          }
+
+          // Variant rows
+          for (let j = 0; j < variantParsed.length; j++) {
+            const p = variantParsed[j];
+            if (!p) continue;
+            const parent = parentMap.get(p.parentSku)!;
+            const { axes } = parent;
+            const opts: Record<string, string> = {};
+            if (axes[0] && p.attr1) opts[axes[0]] = p.attr1;
+            if (axes[1] && p.attr2) opts[axes[1]] = p.attr2;
+            if (axes[2] && p.attr3) opts[axes[2]] = p.attr3;
+            const attrLabel = [p.attr1, p.attr2, p.attr3]
+              .filter(Boolean)
+              .join(" - ");
+            const name =
+              p.variantName ||
+              `${parent.name}${attrLabel ? ` - ${attrLabel}` : ""}`;
+            let bc: string | null = p.barcode;
+            let bcSrc: "manual" | "auto" = "manual";
+            if (bc === null) {
+              bc = await generateUniqueBarcode(t.organizationId, tx);
+              bcSrc = "auto";
+            }
+            const [created] = await tx
+              .insert(itemsTable)
+              .values({
+                organizationId: t.organizationId,
+                sku: p.sku,
+                name,
+                parentItemId: parent.id,
+                variantOptions: opts,
+                barcode: bc,
+                barcodeSource: bcSrc,
+                salePrice: toStr(p.salePrice),
+                purchasePrice: toStr(p.purchasePrice),
+                unit: parent.unit,
+                category: parent.category,
+                hsnCode: parent.hsnCode,
+                taxRate: parent.taxRate ?? "0",
+              })
+              .returning({ id: itemsTable.id });
+            if (
+              p.totalStock !== null &&
+              p.totalStock > 0 &&
+              primaryWarehouseId !== null
+            ) {
+              await tx.insert(itemWarehouseStockTable).values({
+                organizationId: t.organizationId,
+                itemId: created.id,
+                warehouseId: primaryWarehouseId,
+                quantity: toStr(p.totalStock),
+              });
+              await tx.insert(stockMovementsTable).values({
+                organizationId: t.organizationId,
+                itemId: created.id,
+                warehouseId: primaryWarehouseId,
+                movementType: "adjustment",
+                quantity: toStr(p.totalStock),
+                notes: "Unified bulk import",
+              });
+            }
+          }
+        });
+        committed = true;
+        break;
+      } catch (err) {
+        if (isBarcodeUniqueViolation(err) && attempt < MAX_RETRIES - 1)
+          continue;
+        throw err;
+      }
+    }
+
+    if (!committed) {
+      res.status(409).json({
+        error: `Could not allocate unique barcodes after ${MAX_RETRIES} attempts. Please retry.`,
+      });
+      return;
+    }
+
+    res.json({ results, counts });
+  } catch (err) {
+    next(err);
+  }
+});
+
+export default router;

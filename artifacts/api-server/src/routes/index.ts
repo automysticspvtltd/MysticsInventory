@@ -38,6 +38,7 @@ import adminRouter from "./admin";
 import posRouter from "./pos";
 import itemBarcodesRouter from "./itemBarcodes";
 import variantImportRouter from "./variantImport";
+import unifiedImportRouter from "./unifiedImport";
 
 const router: IRouter = Router();
 
@@ -71,6 +72,7 @@ router.use(warehousesRouter);
 // tenant middleware applies and a barcode can be looked up by id.
 router.use(itemBarcodesRouter);
 router.use(variantImportRouter);
+router.use(unifiedImportRouter);
 router.use(itemsRouter);
 router.use(posRouter);
 router.use(stockMovementsRouter);

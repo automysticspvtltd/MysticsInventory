@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Download,
   FileSpreadsheet,
+  Info,
   Loader2,
   Upload,
   X,
@@ -29,13 +30,7 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  bulkImportItems,
-  getListItemsQueryKey,
-  type BulkImportItemRow,
-  type BulkImportResultRow,
-  type BulkImportItemsResponse,
-} from "@workspace/api-client-react";
+import { customFetch, getListItemsQueryKey } from "@/lib/queryKeys";
 import { cn } from "@/lib/utils";
 
 interface BulkImportItemsDialogProps {
@@ -44,6 +39,48 @@ interface BulkImportItemsDialogProps {
 }
 
 type Mode = "create" | "upsert";
+
+type UnifiedRow = {
+  sku: string;
+  name: string;
+  description: string | null;
+  category: string | null;
+  unit: string | null;
+  salePrice: string | null;
+  purchasePrice: string | null;
+  taxRate: string | null;
+  hsnCode: string | null;
+  barcode: string | null;
+  reorderLevel: string | null;
+  maxDiscountPercent: string | null;
+  maxDiscountAmount: string | null;
+  totalStock: string | null;
+  imageUrl: string | null;
+  parentSku: string | null;
+  variantName: string | null;
+  attr1: string | null;
+  attr2: string | null;
+  attr3: string | null;
+};
+
+type UnifiedResultRow = {
+  index: number;
+  sku: string;
+  parentSku: string;
+  rowType: "simple" | "variant";
+  action: "create" | "update" | "skip" | "error";
+  error?: string;
+};
+
+type UnifiedImportResponse = {
+  results: UnifiedResultRow[];
+  counts: {
+    create: number;
+    update: number;
+    skip: number;
+    error: number;
+  };
+};
 
 const TEMPLATE_HEADERS = [
   "Name",
@@ -61,6 +98,11 @@ const TEMPLATE_HEADERS = [
   "Max Discount (₹)",
   "Total Stock",
   "Image URL",
+  "Parent Item",
+  "Variant Name",
+  "Attribute 1",
+  "Attribute 2",
+  "Attribute 3",
 ] as const;
 
 const TEMPLATE_DATA = [
@@ -68,10 +110,10 @@ const TEMPLATE_DATA = [
     "Sample Widget",
     "WIDGET-001",
     "Demo description (optional)",
-    "Demo",
+    "Electronics",
     "pcs",
     "199",
-    "120",
+    "249",
     "18",
     "3926",
     "8901234567894",
@@ -80,6 +122,33 @@ const TEMPLATE_DATA = [
     "",
     "50",
     "",
+    "",
+    "",
+    "",
+    "",
+    "",
+  ],
+  [
+    "",
+    "TSHIRT-RED-L",
+    "",
+    "",
+    "",
+    "299",
+    "399",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "20",
+    "",
+    "TSHIRT-001",
+    "T-Shirt Red Large",
+    "Red",
+    "Large",
+    "",
   ],
 ];
 
@@ -87,10 +156,7 @@ const MAX_ROWS = 1000;
 
 function buildTemplateCsv(): string {
   return Papa.unparse(
-    {
-      fields: [...TEMPLATE_HEADERS],
-      data: TEMPLATE_DATA,
-    },
+    { fields: [...TEMPLATE_HEADERS], data: TEMPLATE_DATA },
     { quotes: true },
   );
 }
@@ -109,54 +175,88 @@ function downloadTemplate() {
 }
 
 function normaliseHeader(h: string): string {
-  return h.trim().replace(/\s+/g, "").toLowerCase();
+  return h.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-const HEADER_ALIASES: Record<string, keyof BulkImportItemRow> = {
+const HEADER_ALIASES: Record<string, keyof UnifiedRow> = {
   sku: "sku",
   name: "name",
-  itemname: "name",
-  productname: "name",
+  "item name": "name",
+  "product name": "name",
+  "variant name": "variantName",
+  variantname: "variantName",
   description: "description",
   category: "category",
   unit: "unit",
   uom: "unit",
+  "sale price": "salePrice",
   saleprice: "salePrice",
+  "selling price": "salePrice",
   sellingprice: "salePrice",
   mrp: "purchasePrice",
+  "purchase price": "purchasePrice",
   purchaseprice: "purchasePrice",
+  "cost price": "purchasePrice",
   costprice: "purchasePrice",
   cost: "purchasePrice",
+  "hsn code": "hsnCode",
   hsncode: "hsnCode",
   hsn: "hsnCode",
   barcode: "barcode",
   ean: "barcode",
   upc: "barcode",
   gtin: "barcode",
+  "tax rate %": "taxRate",
   taxrate: "taxRate",
-  "taxrate%": "taxRate",
+  "tax rate": "taxRate",
   gst: "taxRate",
   gstrate: "taxRate",
+  "reorder level": "reorderLevel",
   reorderlevel: "reorderLevel",
+  "min stock level": "reorderLevel",
   minstocklevel: "reorderLevel",
   reorder: "reorderLevel",
+  "total stock": "totalStock",
   totalstock: "totalStock",
-  "maxdiscount(%)": "maxDiscountPercent",
+  stock: "totalStock",
+  quantity: "totalStock",
+  "opening stock": "totalStock",
+  "max discount (%)": "maxDiscountPercent",
+  "max discount percent": "maxDiscountPercent",
   maxdiscountpercent: "maxDiscountPercent",
   maxdiscount: "maxDiscountPercent",
-  "maxdiscount(rs)": "maxDiscountPercent",
-  "maxdiscount(₹)": "maxDiscountAmount",
+  "max discount (₹)": "maxDiscountAmount",
+  "max discount (rs)": "maxDiscountAmount",
   maxdiscountamount: "maxDiscountAmount",
-  "maxdiscountamount(₹)": "maxDiscountAmount",
+  "image url": "imageUrl",
   imageurl: "imageUrl",
   image: "imageUrl",
-  "imageurl(url)": "imageUrl",
-  productimage: "imageUrl",
   imgurl: "imageUrl",
+  "parent item": "parentSku",
+  parentitem: "parentSku",
+  "parent sku": "parentSku",
+  parentsku: "parentSku",
+  parent: "parentSku",
+  "attribute 1": "attr1",
+  attribute1: "attr1",
+  "attr 1": "attr1",
+  attr1: "attr1",
+  "attribute 2": "attr2",
+  attribute2: "attr2",
+  "attr 2": "attr2",
+  attr2: "attr2",
+  "attribute 3": "attr3",
+  attribute3: "attr3",
+  "attr 3": "attr3",
+  attr3: "attr3",
 };
 
-function buildRow(out: Partial<BulkImportItemRow>): BulkImportItemRow {
-  const str = (v: unknown) => (v != null && String(v).trim() !== "" ? String(v).trim() : null);
+function str(v: unknown): string | null {
+  const s = typeof v === "string" ? v.trim() : String(v ?? "").trim();
+  return s === "" ? null : s;
+}
+
+function buildRow(out: Partial<UnifiedRow>): UnifiedRow {
   return {
     sku: String(out.sku ?? "").trim(),
     name: String(out.name ?? "").trim(),
@@ -165,23 +265,28 @@ function buildRow(out: Partial<BulkImportItemRow>): BulkImportItemRow {
     unit: str(out.unit),
     salePrice: str(out.salePrice),
     purchasePrice: str(out.purchasePrice),
+    taxRate: str(out.taxRate),
     hsnCode: str(out.hsnCode),
     barcode: str(out.barcode),
-    taxRate: str(out.taxRate),
     reorderLevel: str(out.reorderLevel),
     maxDiscountPercent: str(out.maxDiscountPercent),
     maxDiscountAmount: str(out.maxDiscountAmount),
     totalStock: str(out.totalStock),
     imageUrl: str(out.imageUrl),
+    parentSku: str(out.parentSku),
+    variantName: str(out.variantName),
+    attr1: str(out.attr1),
+    attr2: str(out.attr2),
+    attr3: str(out.attr3),
   };
 }
 
 function processHeadersAndData(
   headers: string[],
   rawData: Record<string, string>[],
-): { rows: BulkImportItemRow[]; warnings: string[] } {
+): { rows: UnifiedRow[]; warnings: string[] } {
   const warnings: string[] = [];
-  const headerMap: Record<string, keyof BulkImportItemRow> = {};
+  const headerMap: Record<string, keyof UnifiedRow> = {};
   for (const h of headers) {
     const normal = normaliseHeader(h);
     const target = HEADER_ALIASES[normal];
@@ -192,22 +297,15 @@ function processHeadersAndData(
       "File is missing a `SKU` column. Download the template to see the required headers.",
     );
   }
-  if (!Object.values(headerMap).includes("name")) {
-    throw new Error(
-      "File is missing a `Name` column. Download the template to see the required headers.",
-    );
-  }
   const ignoredHeaders = headers.filter((h) => !headerMap[h]);
   if (ignoredHeaders.length > 0) {
     warnings.push(
-      `Ignored unknown column${
-        ignoredHeaders.length > 1 ? "s" : ""
-      }: ${ignoredHeaders.join(", ")}`,
+      `Ignored unknown column${ignoredHeaders.length > 1 ? "s" : ""}: ${ignoredHeaders.join(", ")}`,
     );
   }
-  const rows: BulkImportItemRow[] = [];
+  const rows: UnifiedRow[] = [];
   for (const raw of rawData) {
-    const out: Partial<BulkImportItemRow> = {};
+    const out: Partial<UnifiedRow> = {};
     let touched = false;
     for (const [csvHeader, target] of Object.entries(headerMap)) {
       const value = raw[csvHeader];
@@ -222,7 +320,7 @@ function processHeadersAndData(
 
 function parseCsvFile(
   file: File,
-): Promise<{ rows: BulkImportItemRow[]; warnings: string[] }> {
+): Promise<{ rows: UnifiedRow[]; warnings: string[] }> {
   return new Promise((resolve, reject) => {
     Papa.parse<Record<string, string>>(file, {
       header: true,
@@ -230,8 +328,7 @@ function parseCsvFile(
       transformHeader: (h) => h.trim(),
       complete: (result) => {
         try {
-          const headers = result.meta.fields ?? [];
-          resolve(processHeadersAndData(headers, result.data));
+          resolve(processHeadersAndData(result.meta.fields ?? [], result.data));
         } catch (err) {
           reject(err);
         }
@@ -243,7 +340,7 @@ function parseCsvFile(
 
 function parseXlsxFile(
   file: File,
-): Promise<{ rows: BulkImportItemRow[]; warnings: string[] }> {
+): Promise<{ rows: UnifiedRow[]; warnings: string[] }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -255,15 +352,15 @@ function parseXlsxFile(
           reject(new Error("Excel file contains no sheets."));
           return;
         }
-        const aoa = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, {
-          header: 1,
-          defval: null,
-          blankrows: false,
-        });
-        // Find first row that contains a recognised column
+        const aoa = XLSX.utils.sheet_to_json<(string | number | null)[]>(
+          sheet,
+          { header: 1, defval: null, blankrows: false },
+        );
         let headerRowIdx = -1;
         for (let i = 0; i < Math.min(aoa.length, 10); i++) {
-          const rowNorm = aoa[i].map((v) => normaliseHeader(String(v ?? "")));
+          const rowNorm = aoa[i].map((v) =>
+            normaliseHeader(String(v ?? "")),
+          );
           if (rowNorm.some((n) => HEADER_ALIASES[n] !== undefined)) {
             headerRowIdx = i;
             break;
@@ -272,12 +369,14 @@ function parseXlsxFile(
         if (headerRowIdx === -1) {
           reject(
             new Error(
-              "Could not find a recognised header row in the Excel file. Download the template to see the required columns.",
+              "Could not find a recognised header row. Download the template to see the required columns.",
             ),
           );
           return;
         }
-        const headers = aoa[headerRowIdx].map((v) => String(v ?? "").trim());
+        const headers = aoa[headerRowIdx].map((v) =>
+          String(v ?? "").trim(),
+        );
         const rawData: Record<string, string>[] = aoa
           .slice(headerRowIdx + 1)
           .map((row) => {
@@ -289,7 +388,9 @@ function parseXlsxFile(
           });
         resolve(processHeadersAndData(headers, rawData));
       } catch (err) {
-        reject(err instanceof Error ? err : new Error("Failed to read Excel file."));
+        reject(
+          err instanceof Error ? err : new Error("Failed to read Excel file."),
+        );
       }
     };
     reader.onerror = () => reject(new Error("Failed to read file."));
@@ -306,13 +407,13 @@ export function BulkImportItemsDialog({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [fileName, setFileName] = useState<string | null>(null);
-  const [rows, setRows] = useState<BulkImportItemRow[]>([]);
+  const [rows, setRows] = useState<UnifiedRow[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [mode, setMode] = useState<Mode>("create");
-  const [results, setResults] = useState<BulkImportResultRow[] | null>(null);
-  const [counts, setCounts] = useState<
-    BulkImportItemsResponse["counts"] | null
-  >(null);
+  const [results, setResults] = useState<UnifiedResultRow[] | null>(null);
+  const [counts, setCounts] = useState<UnifiedImportResponse["counts"] | null>(
+    null,
+  );
   const [parsing, setParsing] = useState(false);
   const [validating, setValidating] = useState(false);
   const [committing, setCommitting] = useState(false);
@@ -321,6 +422,15 @@ export function BulkImportItemsDialog({
   const errorRows = useMemo(
     () => results?.filter((r) => r.action === "error") ?? [],
     [results],
+  );
+
+  const simpleCount = useMemo(
+    () => rows.filter((r) => !r.parentSku).length,
+    [rows],
+  );
+  const variantCount = useMemo(
+    () => rows.filter((r) => !!r.parentSku).length,
+    [rows],
   );
 
   function reset() {
@@ -371,11 +481,10 @@ export function BulkImportItemsDialog({
       setRows(parsed);
       setFileName(file.name);
       setWarnings(parseWarnings);
-      // Run a dry-run for instant feedback.
       await runDryRun(parsed, mode);
     } catch (err) {
       setTopLevelError(
-        err instanceof Error ? err.message : "Failed to read CSV file",
+        err instanceof Error ? err.message : "Failed to read file",
       );
       setRows([]);
     } finally {
@@ -383,21 +492,26 @@ export function BulkImportItemsDialog({
     }
   }
 
-  async function runDryRun(currentRows: BulkImportItemRow[], currentMode: Mode) {
+  async function runDryRun(currentRows: UnifiedRow[], currentMode: Mode) {
     setValidating(true);
     setTopLevelError(null);
     try {
-      const resp = await bulkImportItems({
-        mode: currentMode,
-        dryRun: true,
-        rows: currentRows,
-      });
+      const resp = await customFetch<UnifiedImportResponse>(
+        "/api/items/unified-bulk-import",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mode: currentMode,
+            dryRun: true,
+            rows: currentRows,
+          }),
+        },
+      );
       setResults(resp.results);
       setCounts(resp.counts);
     } catch (err) {
-      // Server returns 400 with a populated body when there are row errors;
-      // customFetch throws ApiError, exposing the parsed body on `data`.
-      const body = (err as { data?: BulkImportItemsResponse | null })?.data;
+      const body = (err as { data?: UnifiedImportResponse | null })?.data;
       if (body && Array.isArray(body.results)) {
         setResults(body.results);
         setCounts(body.counts);
@@ -419,27 +533,30 @@ export function BulkImportItemsDialog({
   }
 
   async function handleCommit() {
-    if (rows.length === 0) return;
-    if (errorRows.length > 0) return;
+    if (rows.length === 0 || errorRows.length > 0) return;
     setCommitting(true);
     setTopLevelError(null);
     try {
-      const resp = await bulkImportItems({
-        mode,
-        dryRun: false,
-        rows,
-      });
+      const resp = await customFetch<UnifiedImportResponse>(
+        "/api/items/unified-bulk-import",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode, dryRun: false, rows }),
+        },
+      );
       setResults(resp.results);
       setCounts(resp.counts);
+      const { create, update } = resp.counts;
       toast({
         title: "Items imported",
-        description: `${resp.counts.create} created, ${resp.counts.update} updated.`,
+        description: `${create} created, ${update} updated.`,
       });
       queryClient.invalidateQueries({ queryKey: getListItemsQueryKey() });
       reset();
       onOpenChange(false);
     } catch (err) {
-      const body = (err as { data?: BulkImportItemsResponse | null })?.data;
+      const body = (err as { data?: UnifiedImportResponse | null })?.data;
       if (body && Array.isArray(body.results)) {
         setResults(body.results);
         setCounts(body.counts);
@@ -460,15 +577,18 @@ export function BulkImportItemsDialog({
     hasFile && !validating && !committing && errorRows.length === 0;
 
   return (
-    <Dialog open={open} onOpenChange={(v) => (v ? onOpenChange(true) : handleClose())}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => (v ? onOpenChange(true) : handleClose())}
+    >
       <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader className="shrink-0">
-          <DialogTitle>Bulk import items</DialogTitle>
+          <DialogTitle>Import items</DialogTitle>
           <DialogDescription>
-            Upload a CSV or Excel (.xlsx) file with up to {MAX_ROWS} rows.
-            Required columns are{" "}
-            <code className="font-mono">SKU</code> and{" "}
-            <code className="font-mono">Name</code>.
+            Upload a CSV or Excel file with up to {MAX_ROWS} rows. Supports
+            both simple items and variant products in a single file. Rows with a{" "}
+            <code className="font-mono">Parent Item</code> column are treated as
+            variants.
           </DialogDescription>
         </DialogHeader>
 
@@ -483,7 +603,7 @@ export function BulkImportItemsDialog({
               data-testid="input-bulk-import-file"
               onChange={(e) => {
                 const file = e.target.files?.[0];
-                if (file) handleFile(file);
+                if (file) void handleFile(file);
               }}
             />
             <Button
@@ -511,6 +631,11 @@ export function BulkImportItemsDialog({
                 <span className="font-medium text-foreground">{fileName}</span>
                 <span>·</span>
                 <span>{rows.length} rows</span>
+                {variantCount > 0 && (
+                  <span className="text-xs">
+                    ({simpleCount} items, {variantCount} variants)
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={reset}
@@ -523,32 +648,60 @@ export function BulkImportItemsDialog({
             )}
           </div>
 
-          {/* Mode picker */}
-          {hasFile && (
+          {/* Template hint */}
+          {!hasFile && (
+            <Alert variant="default" className="bg-muted/50 border-muted">
+              <Info className="h-4 w-4" />
+              <AlertDescription className="text-xs space-y-1">
+                <p>
+                  <strong>Simple items</strong> — fill in Name, SKU, and any
+                  other fields. Leave <code>Parent Item</code> blank.
+                </p>
+                <p>
+                  <strong>Variant products</strong> — fill{" "}
+                  <code>Parent Item</code> (parent's SKU), SKU, prices, and{" "}
+                  <code>Attribute 1/2/3</code> values. The parent must already
+                  exist with "Has Variants" enabled.
+                </p>
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {/* Mode picker — only relevant for simple rows */}
+          {hasFile && simpleCount > 0 && (
             <div className="rounded-md border bg-muted/30 p-3">
               <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                When a SKU already exists
+                When a simple item's SKU already exists
               </Label>
               <RadioGroup
                 value={mode}
-                onValueChange={(v) => handleModeChange(v as Mode)}
+                onValueChange={(v) => void handleModeChange(v as Mode)}
                 className="mt-2 flex flex-col gap-1.5"
               >
                 <label className="flex items-start gap-2 cursor-pointer">
-                  <RadioGroupItem value="create" id="bulk-mode-create" className="mt-1" />
+                  <RadioGroupItem
+                    value="create"
+                    id="bulk-mode-create"
+                    className="mt-1"
+                  />
                   <div className="text-sm">
                     <div className="font-medium">Skip and report errors</div>
                     <div className="text-xs text-muted-foreground">
-                      Rows whose SKU already exists are flagged as errors. The import is rejected unless every row is new.
+                      Rows whose SKU already exists are flagged as errors.
                     </div>
                   </div>
                 </label>
                 <label className="flex items-start gap-2 cursor-pointer">
-                  <RadioGroupItem value="upsert" id="bulk-mode-upsert" className="mt-1" />
+                  <RadioGroupItem
+                    value="upsert"
+                    id="bulk-mode-upsert"
+                    className="mt-1"
+                  />
                   <div className="text-sm">
                     <div className="font-medium">Update existing items</div>
                     <div className="text-xs text-muted-foreground">
-                      Existing simple items are updated by SKU. Variants, bundles and batch-tracked items are still rejected — edit those individually.
+                      Existing simple items are updated by SKU. Variants,
+                      bundles and batch-tracked items are still rejected.
                     </div>
                   </div>
                 </label>
@@ -556,7 +709,15 @@ export function BulkImportItemsDialog({
             </div>
           )}
 
-          {/* Warnings & errors */}
+          {/* Spinners */}
+          {(parsing || validating) && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              {parsing ? "Reading file…" : "Validating rows…"}
+            </div>
+          )}
+
+          {/* Warnings */}
           {warnings.length > 0 && (
             <Alert>
               <AlertCircle className="h-4 w-4" />
@@ -567,6 +728,8 @@ export function BulkImportItemsDialog({
               </AlertDescription>
             </Alert>
           )}
+
+          {/* Top-level error */}
           {topLevelError && (
             <Alert variant="destructive">
               <AlertCircle className="h-4 w-4" />
@@ -574,28 +737,31 @@ export function BulkImportItemsDialog({
             </Alert>
           )}
 
-          {/* Counts summary */}
+          {/* Counts */}
           {counts && (
             <div className="flex flex-wrap items-center gap-2 text-sm">
-              <Badge variant="secondary" className="gap-1">
-                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                {counts.create} to create
-              </Badge>
-              <Badge variant="secondary" className="gap-1">
-                <CheckCircle2 className="h-3.5 w-3.5 text-blue-600" />
-                {counts.update} to update
-              </Badge>
+              {counts.create > 0 && (
+                <Badge variant="secondary" className="gap-1">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                  {counts.create} to create
+                </Badge>
+              )}
+              {counts.update > 0 && (
+                <Badge variant="secondary" className="gap-1">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-blue-600" />
+                  {counts.update} to update
+                </Badge>
+              )}
+              {counts.skip > 0 && (
+                <Badge variant="secondary" className="gap-1">
+                  {counts.skip} skipped
+                </Badge>
+              )}
               {counts.error > 0 && (
                 <Badge variant="destructive" className="gap-1">
                   <AlertCircle className="h-3.5 w-3.5" />
                   {counts.error} error{counts.error > 1 ? "s" : ""}
                 </Badge>
-              )}
-              {validating && (
-                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Validating…
-                </span>
               )}
             </div>
           )}
@@ -609,22 +775,18 @@ export function BulkImportItemsDialog({
                     <thead className="bg-muted/50 sticky top-0">
                       <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
                         <th className="px-3 py-2 w-10">#</th>
+                        <th className="px-3 py-2 w-16">Type</th>
                         <th className="px-3 py-2 w-20">Status</th>
                         <th className="px-3 py-2">SKU</th>
                         <th className="px-3 py-2">Name</th>
-                        <th className="px-3 py-2">Description</th>
-                        <th className="px-3 py-2">Category</th>
-                        <th className="px-3 py-2">Unit</th>
+                        <th className="px-3 py-2">Parent Item</th>
+                        <th className="px-3 py-2">Attr 1</th>
+                        <th className="px-3 py-2">Attr 2</th>
+                        <th className="px-3 py-2">Attr 3</th>
                         <th className="px-3 py-2">Sale Price</th>
                         <th className="px-3 py-2">MRP</th>
-                        <th className="px-3 py-2">Tax %</th>
-                        <th className="px-3 py-2">HSN</th>
-                        <th className="px-3 py-2">Barcode</th>
-                        <th className="px-3 py-2">Min Stock</th>
-                        <th className="px-3 py-2">Max Disc %</th>
-                        <th className="px-3 py-2">Max Disc ₹</th>
-                        <th className="px-3 py-2">Total Stock</th>
-                        <th className="px-3 py-2">Image URL</th>
+                        <th className="px-3 py-2">Stock</th>
+                        <th className="px-3 py-2">Category</th>
                         <th className="px-3 py-2">Error</th>
                       </tr>
                     </thead>
@@ -637,10 +799,19 @@ export function BulkImportItemsDialog({
                             className={cn(
                               "border-t",
                               r.action === "error" && "bg-destructive/5",
+                              r.action === "skip" && "bg-muted/30",
                             )}
                           >
                             <td className="px-3 py-2 text-muted-foreground text-xs">
                               {r.index}
+                            </td>
+                            <td className="px-3 py-2">
+                              <Badge
+                                variant="outline"
+                                className="text-[10px] capitalize"
+                              >
+                                {r.rowType}
+                              </Badge>
                             </td>
                             <td className="px-3 py-2">
                               <Badge
@@ -649,7 +820,9 @@ export function BulkImportItemsDialog({
                                     ? "destructive"
                                     : r.action === "update"
                                       ? "secondary"
-                                      : "default"
+                                      : r.action === "skip"
+                                        ? "outline"
+                                        : "default"
                                 }
                                 className="text-[10px] capitalize"
                               >
@@ -660,16 +833,21 @@ export function BulkImportItemsDialog({
                               {r.sku || row?.sku || ""}
                             </td>
                             <td className="px-3 py-2 whitespace-nowrap max-w-[140px] truncate">
-                              {row?.name || ""}
+                              {r.rowType === "variant"
+                                ? (row?.variantName ?? row?.name ?? "")
+                                : (row?.name ?? "")}
                             </td>
-                            <td className="px-3 py-2 whitespace-nowrap max-w-[120px] truncate text-xs text-muted-foreground">
-                              {row?.description || "—"}
+                            <td className="px-3 py-2 font-mono text-xs whitespace-nowrap text-muted-foreground">
+                              {r.parentSku || "—"}
                             </td>
-                            <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">
-                              {row?.category || "—"}
+                            <td className="px-3 py-2 text-xs whitespace-nowrap text-muted-foreground">
+                              {row?.attr1 || "—"}
                             </td>
-                            <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">
-                              {row?.unit || "—"}
+                            <td className="px-3 py-2 text-xs whitespace-nowrap text-muted-foreground">
+                              {row?.attr2 || "—"}
+                            </td>
+                            <td className="px-3 py-2 text-xs whitespace-nowrap text-muted-foreground">
+                              {row?.attr3 || "—"}
                             </td>
                             <td className="px-3 py-2 whitespace-nowrap text-xs text-right">
                               {row?.salePrice || "—"}
@@ -677,29 +855,11 @@ export function BulkImportItemsDialog({
                             <td className="px-3 py-2 whitespace-nowrap text-xs text-right">
                               {row?.purchasePrice || "—"}
                             </td>
-                            <td className="px-3 py-2 whitespace-nowrap text-xs text-right">
-                              {row?.taxRate || "—"}
-                            </td>
-                            <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">
-                              {row?.hsnCode || "—"}
-                            </td>
-                            <td className="px-3 py-2 font-mono text-xs whitespace-nowrap text-muted-foreground">
-                              {row?.barcode || "—"}
-                            </td>
-                            <td className="px-3 py-2 whitespace-nowrap text-xs text-right">
-                              {row?.reorderLevel || "—"}
-                            </td>
-                            <td className="px-3 py-2 whitespace-nowrap text-xs text-right">
-                              {row?.maxDiscountPercent || "—"}
-                            </td>
-                            <td className="px-3 py-2 whitespace-nowrap text-xs text-right">
-                              {row?.maxDiscountAmount || "—"}
-                            </td>
                             <td className="px-3 py-2 whitespace-nowrap text-xs text-right font-medium">
                               {row?.totalStock || "—"}
                             </td>
-                            <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap max-w-[120px] truncate">
-                              {row?.imageUrl || "—"}
+                            <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">
+                              {row?.category || "—"}
                             </td>
                             <td className="px-3 py-2 text-xs text-destructive whitespace-nowrap">
                               {r.error ?? ""}
@@ -727,7 +887,7 @@ export function BulkImportItemsDialog({
           </Button>
           <Button
             type="button"
-            onClick={handleCommit}
+            onClick={() => void handleCommit()}
             disabled={!canCommit}
             data-testid="btn-bulk-import-commit"
           >
@@ -736,10 +896,10 @@ export function BulkImportItemsDialog({
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Importing…
               </>
+            ) : counts ? (
+              `Import ${counts.create + counts.update} item${counts.create + counts.update !== 1 ? "s" : ""}`
             ) : (
-              `Import ${
-                counts ? counts.create + counts.update : rows.length
-              } items`
+              `Import ${rows.length} rows`
             )}
           </Button>
         </DialogFooter>
