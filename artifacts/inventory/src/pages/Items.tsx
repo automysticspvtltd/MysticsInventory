@@ -419,7 +419,6 @@ export default function Items() {
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<string>("");
   const [stockFilter, setStockFilter] = useState<"all" | "in-stock" | "low-stock" | "out-of-stock">("all");
-  const [itemTypeFilter, setItemTypeFilter] = useState<"all" | "regular" | "bundle" | "has-variants">("all");
   const [priceMin, setPriceMin] = useState<string>("");
   const [priceMax, setPriceMax] = useState<string>("");
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -470,13 +469,10 @@ export default function Items() {
       return s > 0 && r > 0 && s <= r;
     });
     if (stockFilter === "out-of-stock") result = result.filter((i) => (i.totalStock ?? 0) <= 0);
-    if (itemTypeFilter === "regular") result = result.filter((i) => !i.isBundle && !i.hasVariants);
-    if (itemTypeFilter === "bundle") result = result.filter((i) => i.isBundle);
-    if (itemTypeFilter === "has-variants") result = result.filter((i) => i.hasVariants);
     if (priceMin !== "") result = result.filter((i) => (i.salePrice ?? 0) >= Number(priceMin));
     if (priceMax !== "") result = result.filter((i) => (i.salePrice ?? 0) <= Number(priceMax));
     return result;
-  }, [grouped.topLevel, categoryFilter, stockFilter, itemTypeFilter, priceMin, priceMax]);
+  }, [grouped.topLevel, categoryFilter, stockFilter, priceMin, priceMax]);
 
   const totalPages = Math.max(1, Math.ceil(filteredTopLevel.length / ITEMS_PER_PAGE));
   const pagedTopLevel = filteredTopLevel.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
@@ -484,12 +480,11 @@ export default function Items() {
   useEffect(() => {
     setPage(1);
     setSelectedIds(new Set());
-  }, [categoryFilter, stockFilter, itemTypeFilter, priceMin, priceMax, debouncedSearch, warehouseFilter]);
+  }, [categoryFilter, stockFilter, priceMin, priceMax, debouncedSearch, warehouseFilter]);
 
-  const hasAdvancedFilters = stockFilter !== "all" || itemTypeFilter !== "all" || priceMin !== "" || priceMax !== "";
+  const hasAdvancedFilters = stockFilter !== "all" || priceMin !== "" || priceMax !== "";
   function clearAdvancedFilters() {
     setStockFilter("all");
-    setItemTypeFilter("all");
     setPriceMin("");
     setPriceMax("");
   }
@@ -999,7 +994,7 @@ export default function Items() {
               </Button>
             )}
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">Stock Status</label>
               <Select value={stockFilter} onValueChange={(v) => setStockFilter(v as typeof stockFilter)}>
@@ -1011,20 +1006,6 @@ export default function Items() {
                   <SelectItemUI value="in-stock">In stock</SelectItemUI>
                   <SelectItemUI value="low-stock">Low stock</SelectItemUI>
                   <SelectItemUI value="out-of-stock">Out of stock</SelectItemUI>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">Item Type</label>
-              <Select value={itemTypeFilter} onValueChange={(v) => setItemTypeFilter(v as typeof itemTypeFilter)}>
-                <SelectTrigger className="h-8 text-sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItemUI value="all">All types</SelectItemUI>
-                  <SelectItemUI value="regular">Regular</SelectItemUI>
-                  <SelectItemUI value="bundle">Bundle</SelectItemUI>
-                  <SelectItemUI value="has-variants">Has variants</SelectItemUI>
                 </SelectContent>
               </Select>
             </div>
