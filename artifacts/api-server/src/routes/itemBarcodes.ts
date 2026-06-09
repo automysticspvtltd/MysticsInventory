@@ -121,11 +121,19 @@ router.get("/items/barcode-labels.pdf", async (req, res, next) => {
       }
     }
 
-    // Pre-render barcode PNGs
+    // Pre-render barcode PNGs — bars only, no embedded human-readable text
+    // (we draw the value as a separate centered line below the image)
     const pngCache = new Map<number, Buffer>();
+    const valueCache = new Map<number, string>();
     for (const item of ordered) {
       const value = resolveBarcodeValue(item);
-      const png = await renderBarcodePng(value, { scale: 3, height: 20 });
+      valueCache.set(item.id, value);
+      const png = await renderBarcodePng(value, {
+        scale: 3,
+        height: 20,
+        includetext: false,
+        paddingheight: 1,
+      });
       pngCache.set(item.id, png);
     }
 
@@ -159,7 +167,7 @@ router.get("/items/barcode-labels.pdf", async (req, res, next) => {
         let barcodeY: number;
 
         if (logoPng) {
-          // Logo (12 × 12 pt) in top-left, item name to its right
+          // Logo (12 × 12 pt) in top-left, item name centered in remaining space
           try {
             doc.image(logoPng, PAD_X, PAD_Y, { width: 12, height: 12 });
           } catch {
@@ -171,28 +179,32 @@ router.get("/items/barcode-labels.pdf", async (req, res, next) => {
             .fillColor("#000000")
             .text(item.name.slice(0, 45), PAD_X + 14, PAD_Y + 2, {
               width: INNER_W - 14,
+              align: "center",
               lineBreak: false,
               ellipsis: true,
             });
           barcodeY = PAD_Y + 14;
         } else {
+          // Center-align product name
           doc
             .font("Helvetica-Bold")
             .fontSize(7)
             .fillColor("#000000")
             .text(item.name.slice(0, 55), PAD_X, PAD_Y, {
               width: INNER_W,
+              align: "center",
               lineBreak: false,
               ellipsis: true,
             });
           barcodeY = PAD_Y + 10;
         }
 
-        // Price line sits near the bottom
-        const priceY = LABEL_H - PAD_Y - 9;
-        const barcodeH = priceY - barcodeY - 3;
+        // Price line near the bottom; barcode value text sits just above it
+        const priceY = LABEL_H - PAD_Y - 8;
+        const barcodeValueY = priceY - 10; // 6 pt text + 2 pt gap above price line
+        const barcodeH = barcodeValueY - barcodeY - 2;
 
-        // Barcode image (no value text — the bars speak for themselves)
+        // Barcode bars (no embedded number — rendered separately below)
         try {
           doc.image(png, PAD_X, barcodeY, {
             fit: [INNER_W, barcodeH],
@@ -201,6 +213,19 @@ router.get("/items/barcode-labels.pdf", async (req, res, next) => {
         } catch {
           // Skip image if it fails
         }
+
+        // Barcode value — centered, shown exactly once
+        const barcodeValue = valueCache.get(item.id) ?? "";
+        doc
+          .font("Helvetica")
+          .fontSize(6)
+          .fillColor("#333333")
+          .text(barcodeValue, PAD_X, barcodeValueY, {
+            width: INNER_W,
+            align: "center",
+            lineBreak: false,
+            ellipsis: true,
+          });
 
         // Price line: MRP with strikethrough + Sale Price bold
         const mrpNum = Number(item.purchasePrice);

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { BarcodeImportDialog } from "@/components/BarcodeImportDialog";
 import { useQueryClient } from "@tanstack/react-query";
@@ -46,7 +46,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Printer, RefreshCw, ScanLine, Sparkles, Upload } from "lucide-react";
+import { ChevronLeft, ChevronRight, Printer, RefreshCw, ScanLine, Sparkles, Upload } from "lucide-react";
 import { ReportExportButton, type ExportColumn } from "@/components/ReportExportButton";
 
 type FilterMode = "all" | "missing" | "auto" | "manual" | "mismatch";
@@ -72,6 +72,8 @@ export default function Barcodes() {
   const [filter, setFilter] = useState<FilterMode>("all");
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [copies, setCopies] = useState<number>(1);
+  const [page, setPage] = useState(1);
+  const ITEMS_PER_PAGE = 15;
 
   const { data: me } = useGetMe();
   const isAdmin =
@@ -145,17 +147,27 @@ export default function Barcodes() {
 
   const [importOpen, setImportOpen] = useState(false);
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / ITEMS_PER_PAGE));
+  const pagedItems = useMemo(
+    () => filtered.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE),
+    [filtered, page, ITEMS_PER_PAGE],
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, filter, filtered.length]);
+
   const allSelected =
-    filtered.length > 0 && filtered.every((i) => selected.has(i.id));
+    pagedItems.length > 0 && pagedItems.every((i) => selected.has(i.id));
 
   const toggleAll = () => {
     if (allSelected) {
       const next = new Set(selected);
-      for (const i of filtered) next.delete(i.id);
+      for (const i of pagedItems) next.delete(i.id);
       setSelected(next);
     } else {
       const next = new Set(selected);
-      for (const i of filtered) next.add(i.id);
+      for (const i of pagedItems) next.add(i.id);
       setSelected(next);
     }
   };
@@ -383,6 +395,7 @@ export default function Barcodes() {
               No items match the current filter.
             </div>
           ) : (
+            <>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -403,7 +416,7 @@ export default function Barcodes() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((i) => (
+                {pagedItems.map((i) => (
                   <TableRow key={i.id} data-testid={`row-barcode-${i.id}`}>
                     <TableCell>
                       <Checkbox
@@ -526,6 +539,39 @@ export default function Barcodes() {
                 ))}
               </TableBody>
             </Table>
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between pt-3 text-sm text-muted-foreground">
+                <span>
+                  {filtered.length} item{filtered.length !== 1 ? "s" : ""}
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                    data-testid="btn-barcodes-prev-page"
+                  >
+                    <ChevronLeft className="h-4 w-4 mr-1" />
+                    Prev
+                  </Button>
+                  <span>
+                    Page {page} of {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page === totalPages}
+                    data-testid="btn-barcodes-next-page"
+                  >
+                    Next
+                    <ChevronRight className="h-4 w-4 ml-1" />
+                  </Button>
+                </div>
+              </div>
+            )}
+            </>
           )}
         </CardContent>
       </Card>
