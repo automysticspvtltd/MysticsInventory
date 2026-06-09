@@ -234,8 +234,8 @@ router.get("/items/barcode-labels.pdf", async (req, res, next) => {
         const hasSale = Number.isFinite(saleNum) && saleNum > 0;
 
         if (hasMrp && hasSale) {
-          const mrpStr = `MRP \u20B9${mrpNum.toFixed(0)}`;
-          const saleStr = `  \u20B9${saleNum.toFixed(0)}`;
+          const mrpStr = `MRP Rs.${mrpNum.toFixed(0)}`;
+          const saleStr = `  Rs.${saleNum.toFixed(0)}`;
 
           doc.font("Helvetica").fontSize(6).fillColor("#888888");
           const mrpW = doc.widthOfString(mrpStr);
@@ -252,12 +252,12 @@ router.get("/items/barcode-labels.pdf", async (req, res, next) => {
             .fillColor("#888888")
             .text(mrpStr, startX, priceY, { lineBreak: false });
 
-          // Strikethrough line over MRP text
+          // Strikethrough line through centre of MRP text
           doc
-            .moveTo(startX, priceY + 2.5)
-            .lineTo(startX + mrpW, priceY + 2.5)
-            .strokeColor("#888888")
-            .lineWidth(0.4)
+            .moveTo(startX, priceY + 3)
+            .lineTo(startX + mrpW, priceY + 3)
+            .strokeColor("#555555")
+            .lineWidth(0.6)
             .stroke();
 
           doc
@@ -266,7 +266,7 @@ router.get("/items/barcode-labels.pdf", async (req, res, next) => {
             .fillColor("#000000")
             .text(saleStr, startX + mrpW, priceY, { lineBreak: false });
         } else if (hasMrp) {
-          const mrpStr = `MRP \u20B9${mrpNum.toFixed(0)}`;
+          const mrpStr = `MRP Rs.${mrpNum.toFixed(0)}`;
           doc
             .font("Helvetica-Bold")
             .fontSize(7)
@@ -277,7 +277,7 @@ router.get("/items/barcode-labels.pdf", async (req, res, next) => {
               lineBreak: false,
             });
         } else if (hasSale) {
-          const saleStr = `\u20B9${saleNum.toFixed(0)}`;
+          const saleStr = `Rs.${saleNum.toFixed(0)}`;
           doc
             .font("Helvetica-Bold")
             .fontSize(7)
