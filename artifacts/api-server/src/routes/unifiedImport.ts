@@ -482,6 +482,50 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
         });
       }
     }
+
+    // ── Intra-file parents: simple rows in the same upload that are
+    //    referenced as parentSku by variant rows but don't yet exist in
+    //    the DB.  Add synthetic parentMap entries so variant validation
+    //    passes, and derive variant axes from which attr fields are used.
+    const simpleParsedBySkuIdx = new Map<string, number>();
+    for (let j = 0; j < simpleParsed.length; j++) {
+      const sp = simpleParsed[j];
+      if (sp) simpleParsedBySkuIdx.set(sp.sku, j);
+    }
+    const intraFileParentSkus = new Set<string>();
+    const intraFileParentAxes = new Map<string, string[]>();
+    for (const vp of variantParsed) {
+      if (!vp || parentMap.has(vp.parentSku)) continue;
+      if (!simpleParsedBySkuIdx.has(vp.parentSku)) continue;
+      intraFileParentSkus.add(vp.parentSku);
+    }
+    for (const pSku of intraFileParentSkus) {
+      let hasAttr1 = false, hasAttr2 = false, hasAttr3 = false;
+      for (const vp of variantParsed) {
+        if (!vp || vp.parentSku !== pSku) continue;
+        if (vp.attr1) hasAttr1 = true;
+        if (vp.attr2) hasAttr2 = true;
+        if (vp.attr3) hasAttr3 = true;
+      }
+      const axes: string[] = [];
+      if (hasAttr1 || (!hasAttr2 && !hasAttr3)) axes.push("Attribute 1");
+      if (hasAttr2) axes.push("Attribute 2");
+      if (hasAttr3) axes.push("Attribute 3");
+      intraFileParentAxes.set(pSku, axes);
+      const sp = simpleParsed[simpleParsedBySkuIdx.get(pSku)!]!;
+      parentMap.set(pSku, {
+        id: -1, // sentinel — replaced with real DB id during commit
+        name: sp.name,
+        sku: sp.sku,
+        hasVariants: true,
+        axes,
+        unit: sp.unit,
+        category: sp.category,
+        hsnCode: sp.hsnCode,
+        taxRate: String(sp.taxRate),
+      });
+    }
+
     const variantCandidateSkus = variantParsed
       .filter((p): p is VariantParsed => p !== null)
       .map((p) => p.sku);
@@ -548,7 +592,11 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
       error: results.filter((r) => r.action === "error").length,
     };
 
-    if (dryRun || counts.error > 0) {
+    if (dryRun) {
+      res.json({ results, counts });
+      return;
+    }
+    if (counts.create === 0 && counts.update === 0) {
       res.status(counts.error > 0 ? 400 : 200).json({ results, counts });
       return;
     }
@@ -611,10 +659,6 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
       counts.create = results.filter((r) => r.action === "create").length;
       counts.update = results.filter((r) => r.action === "update").length;
       counts.error = results.filter((r) => r.action === "error").length;
-      if (counts.error > 0) {
-        res.status(400).json({ results, counts });
-        return;
-      }
     }
 
     // ── Fetch primary warehouse ─────────────────────────────────────
@@ -679,6 +723,7 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
                 bc = await generateUniqueBarcode(t.organizationId, tx);
                 bcSrc = "auto";
               }
+              const isIntraParent = intraFileParentSkus.has(p.sku);
               const [created] = await tx
                 .insert(itemsTable)
                 .values({
@@ -695,8 +740,18 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
                   hsnCode: p.hsnCode,
                   taxRate: toStr(p.taxRate),
                   reorderLevel: toStr(p.reorderLevel),
+                  ...(isIntraParent && {
+                    hasVariants: true,
+                    variantOptions: { axes: intraFileParentAxes.get(p.sku) ?? [] },
+                  }),
                 })
                 .returning({ id: itemsTable.id });
+              if (isIntraParent) {
+                // Propagate the real DB id to parentMap so the
+                // variant loop below can use it as parentItemId.
+                const pi = parentMap.get(p.sku);
+                if (pi) pi.id = created.id;
+              }
               if (
                 p.totalStock !== null &&
                 p.totalStock > 0 &&
@@ -820,6 +875,15 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
             const p = variantParsed[j];
             if (!p) continue;
             const parent = parentMap.get(p.parentSku)!;
+            if (parent.id === -1) {
+              // Intra-file parent wasn't committed (e.g. barcode conflict).
+              results[variantResultIdx[j]] = {
+                ...results[variantResultIdx[j]],
+                action: "skip",
+                error: `Parent "${p.parentSku}" could not be created`,
+              };
+              continue;
+            }
             const { axes } = parent;
             const opts: Record<string, string> = {};
             if (axes[0] && p.attr1) opts[axes[0]] = p.attr1;

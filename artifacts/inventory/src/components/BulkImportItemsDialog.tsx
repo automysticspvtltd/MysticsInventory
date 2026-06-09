@@ -25,7 +25,6 @@ import {
   RadioGroup,
   RadioGroupItem,
 } from "@/components/ui/radio-group";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
@@ -532,7 +531,7 @@ export function BulkImportItemsDialog({
   }
 
   async function handleCommit() {
-    if (rows.length === 0 || errorRows.length > 0) return;
+    if (rows.length === 0 || validCount === 0) return;
     setCommitting(true);
     setTopLevelError(null);
     try {
@@ -572,8 +571,8 @@ export function BulkImportItemsDialog({
   }
 
   const hasFile = rows.length > 0;
-  const canCommit =
-    hasFile && !validating && !committing && errorRows.length === 0;
+  const validCount = (counts?.create ?? 0) + (counts?.update ?? 0);
+  const canCommit = hasFile && !validating && !committing && validCount > 0;
 
   return (
     <Dialog
@@ -659,8 +658,9 @@ export function BulkImportItemsDialog({
                 <p>
                   <strong>Variant products</strong> — fill{" "}
                   <code>Parent Item</code> (parent's SKU), SKU, prices, and{" "}
-                  <code>Attribute 1/2/3</code> values. The parent must already
-                  exist with "Has Variants" enabled.
+                  <code>Attribute 1/2/3</code> values. The parent can be
+                  created in the same file — include a row with the parent's
+                  Name and SKU and leave <code>Parent Item</code> blank.
                 </p>
               </AlertDescription>
             </Alert>
@@ -765,99 +765,110 @@ export function BulkImportItemsDialog({
             </div>
           )}
 
+          {/* Partial-import advisory */}
+          {counts && counts.error > 0 && validCount > 0 && (
+            <Alert className="border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30">
+              <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+              <AlertDescription className="text-sm text-amber-700 dark:text-amber-400">
+                {counts.error} row{counts.error === 1 ? "" : "s"} with errors
+                will be skipped — the remaining{" "}
+                {validCount} valid item{validCount === 1 ? "" : "s"} can still
+                be imported.
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* Preview table */}
           {hasFile && results && (
             <div className="rounded-md border overflow-hidden">
-              <ScrollArea className="h-[280px]">
-                <div className="overflow-x-auto">
-                  <table className="w-max min-w-full text-sm">
-                    <thead className="bg-muted/50 sticky top-0">
-                      <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                        <th className="px-3 py-2 w-8">#</th>
-                        <th className="px-3 py-2 w-14">Type</th>
-                        <th className="px-3 py-2 w-18">Status</th>
-                        <th className="px-3 py-2">Reason / Error</th>
-                        <th className="px-3 py-2">SKU</th>
-                        <th className="px-3 py-2">Name</th>
-                        <th className="px-3 py-2">Parent Item</th>
-                        <th className="px-3 py-2">Attr 1</th>
-                        <th className="px-3 py-2">Sale Price</th>
-                        <th className="px-3 py-2">Stock</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {results.map((r) => {
-                        const row = rows[r.index - 1];
-                        return (
-                          <tr
-                            key={r.index}
-                            className={cn(
-                              "border-t",
-                              r.action === "error" && "bg-destructive/5",
-                              r.action === "skip" && "bg-muted/30",
-                            )}
-                          >
-                            <td className="px-3 py-2 text-muted-foreground text-xs">
-                              {r.index}
-                            </td>
-                            <td className="px-3 py-2">
-                              <Badge
-                                variant="outline"
-                                className="text-[10px] capitalize"
-                              >
-                                {r.rowType}
-                              </Badge>
-                            </td>
-                            <td className="px-3 py-2">
-                              <Badge
-                                variant={
-                                  r.action === "error"
-                                    ? "destructive"
-                                    : r.action === "update"
-                                      ? "secondary"
-                                      : r.action === "skip"
-                                        ? "outline"
-                                        : "default"
-                                }
-                                className="text-[10px] capitalize"
-                              >
-                                {r.action}
-                              </Badge>
-                            </td>
-                            <td className="px-3 py-2 text-xs max-w-[220px]">
-                              {r.error ? (
-                                <span className="text-destructive">{r.error}</span>
-                              ) : r.action === "skip" ? (
-                                <span className="text-muted-foreground">Already exists</span>
-                              ) : null}
-                            </td>
-                            <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
-                              {r.sku || row?.sku || ""}
-                            </td>
-                            <td className="px-3 py-2 whitespace-nowrap max-w-[160px] truncate">
-                              {r.rowType === "variant"
-                                ? (row?.variantName ?? row?.name ?? "")
-                                : (row?.name ?? "")}
-                            </td>
-                            <td className="px-3 py-2 font-mono text-xs whitespace-nowrap text-muted-foreground">
-                              {r.parentSku || "—"}
-                            </td>
-                            <td className="px-3 py-2 text-xs whitespace-nowrap text-muted-foreground">
-                              {row?.attr1 || "—"}
-                            </td>
-                            <td className="px-3 py-2 whitespace-nowrap text-xs text-right">
-                              {row?.salePrice || "—"}
-                            </td>
-                            <td className="px-3 py-2 whitespace-nowrap text-xs text-right font-medium">
-                              {row?.totalStock || "—"}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </ScrollArea>
+              <div className="max-h-[280px] overflow-y-auto overflow-x-auto">
+                <table className="w-max min-w-full text-sm">
+                  <thead className="bg-muted/50 sticky top-0 z-10">
+                    <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
+                      <th className="px-3 py-2 w-8">#</th>
+                      <th className="px-3 py-2 w-14">Type</th>
+                      <th className="px-3 py-2 w-18">Status</th>
+                      <th className="px-3 py-2 min-w-[200px]">Reason / Error</th>
+                      <th className="px-3 py-2 whitespace-nowrap">SKU</th>
+                      <th className="px-3 py-2 whitespace-nowrap">Name</th>
+                      <th className="px-3 py-2 whitespace-nowrap">Parent Item</th>
+                      <th className="px-3 py-2 whitespace-nowrap">Attr 1</th>
+                      <th className="px-3 py-2 whitespace-nowrap">Sale Price</th>
+                      <th className="px-3 py-2 whitespace-nowrap">Stock</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {results.map((r) => {
+                      const row = rows[r.index - 1];
+                      return (
+                        <tr
+                          key={r.index}
+                          className={cn(
+                            "border-t",
+                            r.action === "error" && "bg-destructive/5",
+                            r.action === "skip" && "bg-muted/30",
+                          )}
+                        >
+                          <td className="px-3 py-2 text-muted-foreground text-xs">
+                            {r.index}
+                          </td>
+                          <td className="px-3 py-2">
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] capitalize"
+                            >
+                              {r.rowType}
+                            </Badge>
+                          </td>
+                          <td className="px-3 py-2">
+                            <Badge
+                              variant={
+                                r.action === "error"
+                                  ? "destructive"
+                                  : r.action === "update"
+                                    ? "secondary"
+                                    : r.action === "skip"
+                                      ? "outline"
+                                      : "default"
+                              }
+                              className="text-[10px] capitalize"
+                            >
+                              {r.action}
+                            </Badge>
+                          </td>
+                          <td className="px-3 py-2 text-xs min-w-[200px] whitespace-normal break-words">
+                            {r.error ? (
+                              <span className="text-destructive">{r.error}</span>
+                            ) : r.action === "skip" ? (
+                              <span className="text-muted-foreground">Already exists</span>
+                            ) : null}
+                          </td>
+                          <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
+                            {r.sku || row?.sku || ""}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {r.rowType === "variant"
+                              ? (row?.variantName ?? row?.name ?? "")
+                              : (row?.name ?? "")}
+                          </td>
+                          <td className="px-3 py-2 font-mono text-xs whitespace-nowrap text-muted-foreground">
+                            {r.parentSku || "—"}
+                          </td>
+                          <td className="px-3 py-2 text-xs whitespace-nowrap text-muted-foreground">
+                            {row?.attr1 || "—"}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-xs text-right">
+                            {row?.salePrice || "—"}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-xs text-right font-medium">
+                            {row?.totalStock || "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
@@ -884,7 +895,9 @@ export function BulkImportItemsDialog({
                 Importing…
               </>
             ) : counts ? (
-              `Import ${counts.create + counts.update} item${counts.create + counts.update !== 1 ? "s" : ""}`
+              errorRows.length > 0
+                ? `Import ${validCount} valid item${validCount !== 1 ? "s" : ""}`
+                : `Import ${validCount} item${validCount !== 1 ? "s" : ""}`
             ) : (
               `Import ${rows.length} rows`
             )}
