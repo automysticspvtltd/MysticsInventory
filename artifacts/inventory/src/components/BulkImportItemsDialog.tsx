@@ -105,31 +105,79 @@ const TEMPLATE_HEADERS = [
 ] as const;
 
 const TEMPLATE_DATA = [
+  // ── Row 1: Simple product ──────────────────────────────────────────
   [
-    "Sample Widget",
-    "WIDGET-001",
-    "Demo description (optional)",
-    "Electronics",
-    "pcs",
-    "199",
-    "249",
-    "18",
-    "3926",
-    "8901234567894",
-    "10",
-    "",
-    "",
-    "50",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
+    "Sample Widget",   // Name
+    "WIDGET-001",      // SKU
+    "A simple standalone product", // Description
+    "Electronics",     // Category
+    "pcs",             // Unit
+    "199",             // Sale Price
+    "249",             // MRP
+    "18",              // Tax Rate %
+    "3926",            // HSN Code
+    "8901234567894",   // Barcode
+    "10",              // Min Stock Level
+    "",                // Max Discount Percent
+    "",                // Max Discount Amount
+    "50",              // Total Stock
+    "",                // Image URL
+    "",                // Parent Item  ← blank for simple / parent rows
+    "",                // Variant Name ← blank for simple / parent rows
+    "",                // Attribute 1  ← blank for simple / parent rows
+    "",                // Attribute 2
+    "",                // Attribute 3
   ],
+  // ── Row 2: Variant parent row (leave Parent Item blank) ───────────
+  [
+    "T-Shirt Classic", // Name
+    "TSHIRT-001",      // SKU
+    "",                // Description
+    "Apparel",         // Category
+    "pcs",             // Unit
+    "",                // Sale Price  (set per-variant)
+    "",                // MRP
+    "5",               // Tax Rate %
+    "6109",            // HSN Code
+    "",                // Barcode
+    "5",               // Min Stock Level
+    "",                // Max Discount Percent
+    "",                // Max Discount Amount
+    "",                // Total Stock (no stock on parent)
+    "",                // Image URL
+    "",                // Parent Item ← BLANK — this IS the parent
+    "",                // Variant Name
+    "",                // Attribute 1
+    "",                // Attribute 2
+    "",                // Attribute 3
+  ],
+  // ── Row 3: Variant of TSHIRT-001 ──────────────────────────────────
+  [
+    "",                // Name        (auto-generated from parent + attrs)
+    "TSHIRT-001-RED-S", // SKU
+    "",                // Description
+    "",                // Category    (inherited from parent)
+    "",                // Unit        (inherited from parent)
+    "299",             // Sale Price
+    "399",             // MRP
+    "",                // Tax Rate %  (inherited from parent)
+    "",                // HSN Code    (inherited from parent)
+    "",                // Barcode     (auto-generated if blank)
+    "",                // Min Stock Level
+    "",                // Max Discount Percent
+    "",                // Max Discount Amount
+    "30",              // Total Stock
+    "",                // Image URL
+    "TSHIRT-001",      // Parent Item ← SKU of the parent row above
+    "T-Shirt Classic Red S", // Variant Name (optional display label)
+    "Red",             // Attribute 1
+    "S",               // Attribute 2
+    "",                // Attribute 3
+  ],
+  // ── Row 4: Another variant of TSHIRT-001 ──────────────────────────
   [
     "",
-    "TSHIRT-RED-L",
+    "TSHIRT-001-RED-L",
     "",
     "",
     "",
@@ -143,10 +191,10 @@ const TEMPLATE_DATA = [
     "",
     "20",
     "",
-    "TSHIRT-001",
-    "T-Shirt Red Large",
-    "Red",
-    "Large",
+    "TSHIRT-001",      // Parent Item ← same parent SKU
+    "T-Shirt Classic Red L",
+    "Red",             // Attribute 1
+    "L",               // Attribute 2
     "",
   ],
 ];
