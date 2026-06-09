@@ -502,6 +502,20 @@ export default function Items() {
   const totalPages = Math.max(1, Math.ceil(filteredTopLevel.length / ITEMS_PER_PAGE));
   const pagedTopLevel = filteredTopLevel.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
 
+  // All IDs currently visible in the table (top-level + expanded variants).
+  // Used by the select-all checkbox so it can include variant rows.
+  const allVisibleIds = useMemo(() => {
+    const ids: number[] = pagedTopLevel.map((i) => i.id);
+    for (const p of pagedTopLevel) {
+      if (expanded[p.id]) {
+        for (const v of grouped.byParent.get(p.id) ?? []) {
+          ids.push(v.id);
+        }
+      }
+    }
+    return ids;
+  }, [pagedTopLevel, grouped.byParent, expanded]);
+
   useEffect(() => {
     setPage(1);
     setSelectedIds(new Set());
@@ -1159,14 +1173,12 @@ export default function Items() {
               <TableHead className="w-[44px] px-2">
                 <Checkbox
                   checked={
-                    pagedTopLevel.length > 0 &&
-                    pagedTopLevel.every((i) => selectedIds.has(i.id))
+                    allVisibleIds.length > 0 &&
+                    allVisibleIds.every((id) => selectedIds.has(id))
                   }
                   onCheckedChange={(checked) => {
                     if (checked) {
-                      setSelectedIds(
-                        new Set(pagedTopLevel.map((i) => i.id)),
-                      );
+                      setSelectedIds(new Set(allVisibleIds));
                     } else {
                       setSelectedIds(new Set());
                     }
@@ -1380,7 +1392,22 @@ export default function Items() {
                         className="bg-muted/30"
                         data-testid={`row-item-${v.id}`}
                       >
-                        <TableCell className="px-2" />
+                        <TableCell className="px-2">
+                          <Checkbox
+                            checked={selectedIds.has(v.id)}
+                            onCheckedChange={(checked) => {
+                              setSelectedIds((prev) => {
+                                const next = new Set(prev);
+                                if (checked) next.add(v.id);
+                                else next.delete(v.id);
+                                return next;
+                              });
+                            }}
+                            aria-label={`Select ${v.name}`}
+                            data-testid={`checkbox-item-${v.id}`}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </TableCell>
                         <TableCell>
                           <ItemThumb url={v.imageUrl} alt={v.name} />
                         </TableCell>
