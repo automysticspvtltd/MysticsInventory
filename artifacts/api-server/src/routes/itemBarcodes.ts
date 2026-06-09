@@ -56,6 +56,11 @@ const PAD_X = 5;
 const PAD_Y = 4;
 const INNER_W = LABEL_W - PAD_X * 2;
 
+// ₹1,799.00 style — requires DejaVu font (Helvetica lacks U+20B9)
+function labelPrice(n: number): string {
+  return "\u20B9" + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
 router.get("/items/barcode-labels.pdf", async (req, res, next) => {
   try {
     const t = req.tenant!;
@@ -143,6 +148,17 @@ router.get("/items/barcode-labels.pdf", async (req, res, next) => {
       bufferPages: true,
     });
 
+    // DejaVu Sans ships on this system and includes ₹ (U+20B9).
+    // Built-in Helvetica uses WinAnsi encoding which lacks the rupee sign.
+    doc.registerFont(
+      "DV",
+      "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    );
+    doc.registerFont(
+      "DV-Bold",
+      "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    );
+
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader(
       "Content-Disposition",
@@ -160,21 +176,21 @@ router.get("/items/barcode-labels.pdf", async (req, res, next) => {
 
         const png = pngCache.get(item.id)!;
 
-        // Clip to page bounds
         doc.save();
         doc.rect(0, 0, LABEL_W, LABEL_H).clip();
 
+        // ── Header: SKU (line 1) + Name (line 2) ───────────────────────
         let barcodeY: number;
 
         if (logoPng) {
-          // Logo (12 × 12 pt) in top-left, item name centered in remaining space
+          // Logo left (12×12 pt), name to its right
           try {
             doc.image(logoPng, PAD_X, PAD_Y, { width: 12, height: 12 });
           } catch {
             // Skip logo if PDFKit can't read the image format
           }
           doc
-            .font("Helvetica-Bold")
+            .font("DV-Bold")
             .fontSize(7)
             .fillColor("#000000")
             .text(item.name.slice(0, 45), PAD_X + 14, PAD_Y + 2, {
@@ -183,28 +199,38 @@ router.get("/items/barcode-labels.pdf", async (req, res, next) => {
               lineBreak: false,
               ellipsis: true,
             });
-          barcodeY = PAD_Y + 14;
+          barcodeY = PAD_Y + 15;
         } else {
-          // Center-align product name
+          // Line 1: SKU — small, centered
           doc
-            .font("Helvetica-Bold")
-            .fontSize(7)
-            .fillColor("#000000")
-            .text(item.name.slice(0, 55), PAD_X, PAD_Y, {
+            .font("DV")
+            .fontSize(6)
+            .fillColor("#222222")
+            .text(item.sku.slice(0, 60), PAD_X, PAD_Y, {
               width: INNER_W,
               align: "center",
               lineBreak: false,
               ellipsis: true,
             });
-          barcodeY = PAD_Y + 10;
+          // Line 2: Product name — bold, centered
+          doc
+            .font("DV-Bold")
+            .fontSize(7)
+            .fillColor("#000000")
+            .text(item.name.slice(0, 55), PAD_X, PAD_Y + 8, {
+              width: INNER_W,
+              align: "center",
+              lineBreak: false,
+              ellipsis: true,
+            });
+          barcodeY = PAD_Y + 17;
         }
 
-        // Price line near the bottom; barcode value text sits just above it
-        const priceY = LABEL_H - PAD_Y - 8;
-        const barcodeValueY = priceY - 10; // 6 pt text + 2 pt gap above price line
+        // ── Barcode bars + number ───────────────────────────────────────
+        const priceY = LABEL_H - PAD_Y - 9;
+        const barcodeValueY = priceY - 10;
         const barcodeH = barcodeValueY - barcodeY - 2;
 
-        // Barcode bars (no embedded number — rendered separately below)
         try {
           doc.image(png, PAD_X, barcodeY, {
             fit: [INNER_W, barcodeH],
@@ -214,10 +240,9 @@ router.get("/items/barcode-labels.pdf", async (req, res, next) => {
           // Skip image if it fails
         }
 
-        // Barcode value — centered, shown exactly once
         const barcodeValue = valueCache.get(item.id) ?? "";
         doc
-          .font("Helvetica")
+          .font("DV")
           .fontSize(6)
           .fillColor("#333333")
           .text(barcodeValue, PAD_X, barcodeValueY, {
@@ -227,62 +252,62 @@ router.get("/items/barcode-labels.pdf", async (req, res, next) => {
             ellipsis: true,
           });
 
-        // Price line: MRP with strikethrough + Sale Price bold
+        // ── Price row: Sale LEFT (bold black) | MRP RIGHT (gray + strikethrough)
         const mrpNum = Number(item.purchasePrice);
         const saleNum = Number(item.salePrice);
         const hasMrp = Number.isFinite(mrpNum) && mrpNum > 0;
         const hasSale = Number.isFinite(saleNum) && saleNum > 0;
 
         if (hasMrp && hasSale) {
-          const mrpStr = `MRP Rs.${mrpNum.toFixed(0)}`;
-          const saleStr = `  Rs.${saleNum.toFixed(0)}`;
+          const saleStr = labelPrice(saleNum);
+          const mrpStr = labelPrice(mrpNum);
 
-          doc.font("Helvetica").fontSize(6).fillColor("#888888");
+          // Measure widths at the correct font/size first
+          doc.font("DV-Bold").fontSize(7);
+          const saleW = doc.widthOfString(saleStr);
+          doc.font("DV").fontSize(7);
           const mrpW = doc.widthOfString(mrpStr);
 
-          doc.font("Helvetica-Bold").fontSize(7).fillColor("#000000");
-          const saleW = doc.widthOfString(saleStr);
-
-          const totalW = mrpW + saleW;
-          const startX = PAD_X + Math.max(0, (INNER_W - totalW) / 2);
-
+          // Sale price — flush left, bold black
           doc
-            .font("Helvetica")
-            .fontSize(6)
+            .font("DV-Bold")
+            .fontSize(7)
+            .fillColor("#000000")
+            .text(saleStr, PAD_X, priceY, { lineBreak: false });
+
+          // MRP — flush right, gray
+          const mrpX = LABEL_W - PAD_X - mrpW;
+          doc
+            .font("DV")
+            .fontSize(7)
             .fillColor("#888888")
-            .text(mrpStr, startX, priceY, { lineBreak: false });
+            .text(mrpStr, mrpX, priceY, { lineBreak: false });
 
-          // Strikethrough line through centre of MRP text
+          // Strikethrough through the visual centre of MRP text
           doc
-            .moveTo(startX, priceY + 3)
-            .lineTo(startX + mrpW, priceY + 3)
+            .moveTo(mrpX, priceY + 3.5)
+            .lineTo(mrpX + mrpW, priceY + 3.5)
             .strokeColor("#555555")
-            .lineWidth(0.6)
+            .lineWidth(0.7)
             .stroke();
 
+          void saleW;
+        } else if (hasSale) {
           doc
-            .font("Helvetica-Bold")
+            .font("DV-Bold")
             .fontSize(7)
             .fillColor("#000000")
-            .text(saleStr, startX + mrpW, priceY, { lineBreak: false });
-        } else if (hasMrp) {
-          const mrpStr = `MRP Rs.${mrpNum.toFixed(0)}`;
-          doc
-            .font("Helvetica-Bold")
-            .fontSize(7)
-            .fillColor("#000000")
-            .text(mrpStr, PAD_X, priceY, {
+            .text(labelPrice(saleNum), PAD_X, priceY, {
               width: INNER_W,
               align: "center",
               lineBreak: false,
             });
-        } else if (hasSale) {
-          const saleStr = `Rs.${saleNum.toFixed(0)}`;
+        } else if (hasMrp) {
           doc
-            .font("Helvetica-Bold")
+            .font("DV-Bold")
             .fontSize(7)
             .fillColor("#000000")
-            .text(saleStr, PAD_X, priceY, {
+            .text(labelPrice(mrpNum), PAD_X, priceY, {
               width: INNER_W,
               align: "center",
               lineBreak: false,
