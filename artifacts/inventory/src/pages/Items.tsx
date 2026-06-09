@@ -505,6 +505,7 @@ export default function Items() {
       { header: "Max Discount (%)", accessor: (r) => r.maxDiscountPercent ?? "" },
       { header: "Max Discount (₹)", accessor: (r) => r.maxDiscountAmount ?? "" },
       { header: "Total Stock", accessor: (r) => r.totalStock },
+      { header: "Image URL", accessor: (r) => r.imageUrl ?? "" },
     ],
     [],
   );

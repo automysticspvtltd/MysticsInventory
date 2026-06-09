@@ -60,6 +60,7 @@ const TEMPLATE_HEADERS = [
   "Max Discount (%)",
   "Max Discount (₹)",
   "Total Stock",
+  "Image URL",
 ] as const;
 
 const TEMPLATE_DATA = [
@@ -78,6 +79,7 @@ const TEMPLATE_DATA = [
     "",
     "",
     "50",
+    "",
   ],
 ];
 
@@ -146,6 +148,11 @@ const HEADER_ALIASES: Record<string, keyof BulkImportItemRow> = {
   "maxdiscount(₹)": "maxDiscountAmount",
   maxdiscountamount: "maxDiscountAmount",
   "maxdiscountamount(₹)": "maxDiscountAmount",
+  imageurl: "imageUrl",
+  image: "imageUrl",
+  "imageurl(url)": "imageUrl",
+  productimage: "imageUrl",
+  imgurl: "imageUrl",
 };
 
 function buildRow(out: Partial<BulkImportItemRow>): BulkImportItemRow {
@@ -165,6 +172,7 @@ function buildRow(out: Partial<BulkImportItemRow>): BulkImportItemRow {
     maxDiscountPercent: str(out.maxDiscountPercent),
     maxDiscountAmount: str(out.maxDiscountAmount),
     totalStock: str(out.totalStock),
+    imageUrl: str(out.imageUrl),
   };
 }
 
@@ -616,6 +624,7 @@ export function BulkImportItemsDialog({
                         <th className="px-3 py-2">Max Disc %</th>
                         <th className="px-3 py-2">Max Disc ₹</th>
                         <th className="px-3 py-2">Total Stock</th>
+                        <th className="px-3 py-2">Image URL</th>
                         <th className="px-3 py-2">Error</th>
                       </tr>
                     </thead>
@@ -688,6 +697,9 @@ export function BulkImportItemsDialog({
                             </td>
                             <td className="px-3 py-2 whitespace-nowrap text-xs text-right font-medium">
                               {row?.totalStock || "—"}
+                            </td>
+                            <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap max-w-[120px] truncate">
+                              {row?.imageUrl || "—"}
                             </td>
                             <td className="px-3 py-2 text-xs text-destructive whitespace-nowrap">
                               {r.error ?? ""}

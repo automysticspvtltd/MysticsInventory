@@ -662,6 +662,7 @@ interface BulkParsedRow {
   hsnCode: string | null;
   taxRate: number;
   reorderLevel: number;
+  imageUrl: string | null;
   totalStock: number | null;
   maxDiscountPercent: number | null;
   maxDiscountAmount: number | null;
@@ -825,6 +826,14 @@ router.post("/items/bulk-import", async (req, res, next) => {
         }
       }
 
+      const imageUrl = (() => {
+        const raw = bulkFieldString(r.imageUrl);
+        if (!raw) return null;
+        try { new URL(raw); } catch { return null; }
+        if (raw.length > 2048) return null;
+        return raw;
+      })();
+
       let maxDiscountPercent: number | null = null;
       {
         const raw = r.maxDiscountPercent;
@@ -860,6 +869,7 @@ router.post("/items/bulk-import", async (req, res, next) => {
         hsnCode,
         taxRate: tax.value,
         reorderLevel: reorder.value,
+        imageUrl,
         totalStock,
         maxDiscountPercent,
         maxDiscountAmount,
@@ -1154,6 +1164,7 @@ router.post("/items/bulk-import", async (req, res, next) => {
               hsnCode: p.hsnCode,
               taxRate: toStr(p.taxRate),
               reorderLevel: toStr(p.reorderLevel),
+              imageUrl: p.imageUrl,
               maxDiscountPercent: p.maxDiscountPercent != null ? toStr(p.maxDiscountPercent) : null,
               maxDiscountAmount: p.maxDiscountAmount != null ? toStr(p.maxDiscountAmount) : null,
               updatedAt: new Date(),

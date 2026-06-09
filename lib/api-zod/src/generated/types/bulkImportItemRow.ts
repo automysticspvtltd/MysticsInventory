@@ -39,6 +39,8 @@ export interface BulkImportItemRow {
    */
   totalStock?: number | string | null;
   /** @nullable */
+  imageUrl?: string | null;
+  /** @nullable */
   maxDiscountPercent?: number | string | null;
   /** @nullable */
   maxDiscountAmount?: number | string | null;
