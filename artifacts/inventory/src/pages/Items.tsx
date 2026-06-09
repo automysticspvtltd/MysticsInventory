@@ -462,17 +462,23 @@ export default function Items() {
   const filteredTopLevel = useMemo(() => {
     let result = grouped.topLevel;
     if (categoryFilter) result = result.filter((i) => i.category === categoryFilter);
-    if (stockFilter === "in-stock") result = result.filter((i) => (i.totalStock ?? 0) > 0);
+    // When a specific warehouse is selected, stock filters operate on that
+    // warehouse's stock (stockAtWarehouse), not the org-wide total.
+    const effectiveStock = (i: (typeof grouped.topLevel)[number]) =>
+      warehouseFilter !== "all"
+        ? (i.stockAtWarehouse ?? i.totalStock ?? 0)
+        : (i.totalStock ?? 0);
+    if (stockFilter === "in-stock") result = result.filter((i) => effectiveStock(i) > 0);
     if (stockFilter === "low-stock") result = result.filter((i) => {
-      const s = i.totalStock ?? 0;
+      const s = effectiveStock(i);
       const r = i.reorderLevel ?? 0;
       return s > 0 && r > 0 && s <= r;
     });
-    if (stockFilter === "out-of-stock") result = result.filter((i) => (i.totalStock ?? 0) <= 0);
+    if (stockFilter === "out-of-stock") result = result.filter((i) => effectiveStock(i) <= 0);
     if (priceMin !== "") result = result.filter((i) => (i.salePrice ?? 0) >= Number(priceMin));
     if (priceMax !== "") result = result.filter((i) => (i.salePrice ?? 0) <= Number(priceMax));
     return result;
-  }, [grouped.topLevel, categoryFilter, stockFilter, priceMin, priceMax]);
+  }, [grouped.topLevel, categoryFilter, stockFilter, priceMin, priceMax, warehouseFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filteredTopLevel.length / ITEMS_PER_PAGE));
   const pagedTopLevel = filteredTopLevel.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
