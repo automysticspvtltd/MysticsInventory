@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import Papa from "papaparse";
+import * as XLSX from "xlsx";
 import {
   AlertCircle,
   CheckCircle2,
@@ -102,6 +103,66 @@ const HEADER_MAP: Record<string, keyof ParsedRow | "_productName" | "_category">
   costprice: "purchasePrice",
 };
 
+function processHeadersAndRows(
+  headers: string[],
+  rawData: Record<string, string>[],
+): { rows: ParsedRow[]; warnings: string[] } | { error: string } {
+  const colMap: Record<string, keyof ParsedRow | "_productName" | "_category"> = {};
+  for (const h of headers) {
+    const target = HEADER_MAP[normaliseHeader(h)];
+    if (target) colMap[h] = target;
+  }
+
+  if (!Object.values(colMap).includes("sku")) {
+    return { error: "File is missing a `SKU` column. Download the template to see the required columns." };
+  }
+
+  const warnings: string[] = [];
+  const ignoredHeaders = headers.filter((h) => !colMap[h]);
+  if (ignoredHeaders.length > 0) {
+    warnings.push(
+      `Ignored unknown column${ignoredHeaders.length > 1 ? "s" : ""}: ${ignoredHeaders.join(", ")}`,
+    );
+  }
+
+  const rows: ParsedRow[] = [];
+  for (const raw of rawData) {
+    const out: Partial<ParsedRow> = {};
+    let hasValue = false;
+    for (const [hdr, target] of Object.entries(colMap)) {
+      const val = raw[hdr];
+      if (val) hasValue = true;
+      if (target === "_productName" || target === "_category") continue;
+      (out as Record<string, unknown>)[target] = val || null;
+    }
+    if (!hasValue) continue;
+
+    const sku = String(out.sku ?? "").trim();
+    if (!sku) continue;
+
+    let rowError: string | undefined;
+    if (out.salePrice != null) {
+      const n = Number(out.salePrice);
+      if (!Number.isFinite(n) || n < 0) rowError = "Sales Price must be a non-negative number";
+    }
+    if (out.purchasePrice != null) {
+      const n = Number(out.purchasePrice);
+      if (!Number.isFinite(n) || n < 0) rowError = rowError ?? "MRP must be a non-negative number";
+    }
+
+    rows.push({
+      sku,
+      barcode: out.barcode ?? null,
+      salePrice: out.salePrice ?? null,
+      purchasePrice: out.purchasePrice ?? null,
+      ...(rowError ? { _rowError: rowError } : {}),
+    });
+  }
+
+  if (rows.length === 0) return { error: "No data rows found in the file." };
+  return { rows, warnings };
+}
+
 function parseCsv(file: File): Promise<{ rows: ParsedRow[]; warnings: string[] }> {
   return new Promise((resolve, reject) => {
     Papa.parse<Record<string, string>>(file, {
@@ -109,74 +170,69 @@ function parseCsv(file: File): Promise<{ rows: ParsedRow[]; warnings: string[] }
       skipEmptyLines: "greedy",
       transformHeader: (h) => h.trim(),
       complete: (result) => {
-        const warnings: string[] = [];
         const headers = result.meta.fields ?? [];
-
-        const colMap: Record<string, keyof ParsedRow | "_productName" | "_category"> = {};
-        for (const h of headers) {
-          const target = HEADER_MAP[normaliseHeader(h)];
-          if (target) colMap[h] = target;
-        }
-
-        if (!Object.values(colMap).includes("sku")) {
-          reject(new Error("CSV is missing a `SKU` column. Download the template to see the required columns."));
-          return;
-        }
-
-        const ignoredHeaders = headers.filter((h) => !colMap[h]);
-        if (ignoredHeaders.length > 0) {
-          warnings.push(
-            `Ignored unknown column${ignoredHeaders.length > 1 ? "s" : ""}: ${ignoredHeaders.join(", ")}`,
-          );
-        }
-
-        const rows: ParsedRow[] = [];
-        for (const raw of result.data) {
-          const out: Partial<ParsedRow> = {};
-          let hasValue = false;
-          for (const [csvHeader, target] of Object.entries(colMap)) {
-            const val = raw[csvHeader];
-            if (val) hasValue = true;
-            if (target === "_productName" || target === "_category") continue;
-            (out as Record<string, unknown>)[target] = val || null;
-          }
-          if (!hasValue) continue;
-
-          const sku = String(out.sku ?? "").trim();
-          if (!sku) continue;
-
-          let rowError: string | undefined;
-          if (out.salePrice != null) {
-            const n = Number(out.salePrice);
-            if (!Number.isFinite(n) || n < 0) {
-              rowError = "Sales Price must be a non-negative number";
-            }
-          }
-          if (out.purchasePrice != null) {
-            const n = Number(out.purchasePrice);
-            if (!Number.isFinite(n) || n < 0) {
-              rowError = rowError ?? "MRP must be a non-negative number";
-            }
-          }
-
-          rows.push({
-            sku,
-            barcode: out.barcode ?? null,
-            salePrice: out.salePrice ?? null,
-            purchasePrice: out.purchasePrice ?? null,
-            ...(rowError ? { _rowError: rowError } : {}),
-          });
-        }
-
-        if (rows.length === 0) {
-          reject(new Error("No data rows found in the file."));
-          return;
-        }
-
-        resolve({ rows, warnings });
+        const out = processHeadersAndRows(headers, result.data);
+        if ("error" in out) { reject(new Error(out.error)); return; }
+        resolve(out);
       },
       error: (err) => reject(err),
     });
+  });
+}
+
+function parseXlsx(file: File): Promise<{ rows: ParsedRow[]; warnings: string[] }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target!.result as ArrayBuffer);
+        const wb = XLSX.read(data, { type: "array" });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        if (!sheet) { reject(new Error("Excel file contains no sheets.")); return; }
+
+        // Get as array-of-arrays so we can find the real header row
+        // (the export may prepend a title row like "Barcodes Export")
+        const aoa = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, {
+          header: 1,
+          defval: null,
+          blankrows: false,
+        });
+
+        // Find first row that contains a recognised column (e.g. "sku")
+        let headerRowIdx = -1;
+        for (let i = 0; i < Math.min(aoa.length, 10); i++) {
+          const rowNorm = aoa[i].map((v) => normaliseHeader(String(v ?? "")));
+          if (rowNorm.some((n) => HEADER_MAP[n] !== undefined)) {
+            headerRowIdx = i;
+            break;
+          }
+        }
+        if (headerRowIdx === -1) {
+          reject(new Error("Could not find a recognised header row in the Excel file. Download the template to see the required columns."));
+          return;
+        }
+
+        const headers = aoa[headerRowIdx].map((v) => String(v ?? "").trim());
+        const dataAoa = aoa.slice(headerRowIdx + 1);
+
+        // Convert to array-of-objects keyed by header name
+        const rawData: Record<string, string>[] = dataAoa.map((row) => {
+          const obj: Record<string, string> = {};
+          headers.forEach((h, i) => {
+            obj[h] = String(row[i] ?? "").trim();
+          });
+          return obj;
+        });
+
+        const out = processHeadersAndRows(headers, rawData);
+        if ("error" in out) { reject(new Error(out.error)); return; }
+        resolve(out);
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error("Failed to read Excel file."));
+      }
+    };
+    reader.onerror = () => reject(new Error("Failed to read file."));
+    reader.readAsArrayBuffer(file);
   });
 }
 
@@ -222,7 +278,9 @@ export function BarcodeImportDialog({ open, onOpenChange }: BarcodeImportDialogP
       if (file.size > 5 * 1024 * 1024) {
         throw new Error("File is too large (max 5 MB).");
       }
-      const { rows: parsed, warnings: parseWarnings } = await parseCsv(file);
+      const isXlsx = file.name.toLowerCase().endsWith(".xlsx") ||
+        file.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      const { rows: parsed, warnings: parseWarnings } = await (isXlsx ? parseXlsx(file) : parseCsv(file));
       if (parsed.length > 1000) {
         throw new Error(`Maximum 1000 rows per import. Your file has ${parsed.length} rows — please split it.`);
       }
@@ -281,7 +339,7 @@ export function BarcodeImportDialog({ open, onOpenChange }: BarcodeImportDialogP
         <DialogHeader>
           <DialogTitle>Import barcodes &amp; prices</DialogTitle>
           <DialogDescription>
-            Upload a CSV to update barcode, Sales Price, and MRP for existing items.
+            Upload a CSV or Excel (.xlsx) file to update barcode, Sales Price, and MRP for existing items.
             The <code className="font-mono">SKU</code> column is required to match items.
           </DialogDescription>
         </DialogHeader>
@@ -291,7 +349,7 @@ export function BarcodeImportDialog({ open, onOpenChange }: BarcodeImportDialogP
             <input
               ref={fileInputRef}
               type="file"
-              accept=".csv,text/csv"
+              accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
               className="hidden"
               data-testid="input-barcode-import-file"
               onChange={(e) => {
