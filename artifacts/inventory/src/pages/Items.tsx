@@ -516,8 +516,8 @@ export default function Items() {
       { header: "HSN Code", accessor: (r) => r.hsnCode ?? "" },
       { header: "Barcode", accessor: (r) => r.barcode ?? "" },
       { header: "Min Stock Level", accessor: (r) => r.reorderLevel },
-      { header: "Max Discount (%)", accessor: (r) => r.maxDiscountPercent ?? "" },
-      { header: "Max Discount (₹)", accessor: (r) => r.maxDiscountAmount ?? "" },
+      { header: "Max Discount Percent", accessor: (r) => r.maxDiscountPercent ?? "" },
+      { header: "Max Discount Amount", accessor: (r) => r.maxDiscountAmount ?? "" },
       { header: "Total Stock", accessor: (r) => r.totalStock },
       { header: "Image URL", accessor: (r) => r.imageUrl ?? "" },
       {

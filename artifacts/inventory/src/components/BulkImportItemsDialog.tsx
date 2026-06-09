@@ -94,8 +94,8 @@ const TEMPLATE_HEADERS = [
   "HSN Code",
   "Barcode",
   "Min Stock Level",
-  "Max Discount (%)",
-  "Max Discount (₹)",
+  "Max Discount Percent",
+  "Max Discount Amount",
   "Total Stock",
   "Image URL",
   "Parent Item",
@@ -221,12 +221,11 @@ const HEADER_ALIASES: Record<string, keyof UnifiedRow> = {
   stock: "totalStock",
   quantity: "totalStock",
   "opening stock": "totalStock",
-  "max discount (%)": "maxDiscountPercent",
   "max discount percent": "maxDiscountPercent",
   maxdiscountpercent: "maxDiscountPercent",
   maxdiscount: "maxDiscountPercent",
-  "max discount (₹)": "maxDiscountAmount",
-  "max discount (rs)": "maxDiscountAmount",
+  "max discount amount": "maxDiscountAmount",
+  "max discount rs": "maxDiscountAmount",
   maxdiscountamount: "maxDiscountAmount",
   "image url": "imageUrl",
   imageurl: "imageUrl",
@@ -774,20 +773,16 @@ export function BulkImportItemsDialog({
                   <table className="w-max min-w-full text-sm">
                     <thead className="bg-muted/50 sticky top-0">
                       <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                        <th className="px-3 py-2 w-10">#</th>
-                        <th className="px-3 py-2 w-16">Type</th>
-                        <th className="px-3 py-2 w-20">Status</th>
+                        <th className="px-3 py-2 w-8">#</th>
+                        <th className="px-3 py-2 w-14">Type</th>
+                        <th className="px-3 py-2 w-18">Status</th>
+                        <th className="px-3 py-2">Reason / Error</th>
                         <th className="px-3 py-2">SKU</th>
                         <th className="px-3 py-2">Name</th>
                         <th className="px-3 py-2">Parent Item</th>
                         <th className="px-3 py-2">Attr 1</th>
-                        <th className="px-3 py-2">Attr 2</th>
-                        <th className="px-3 py-2">Attr 3</th>
                         <th className="px-3 py-2">Sale Price</th>
-                        <th className="px-3 py-2">MRP</th>
                         <th className="px-3 py-2">Stock</th>
-                        <th className="px-3 py-2">Category</th>
-                        <th className="px-3 py-2">Error</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -829,10 +824,17 @@ export function BulkImportItemsDialog({
                                 {r.action}
                               </Badge>
                             </td>
+                            <td className="px-3 py-2 text-xs max-w-[220px]">
+                              {r.error ? (
+                                <span className="text-destructive">{r.error}</span>
+                              ) : r.action === "skip" ? (
+                                <span className="text-muted-foreground">Already exists</span>
+                              ) : null}
+                            </td>
                             <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
                               {r.sku || row?.sku || ""}
                             </td>
-                            <td className="px-3 py-2 whitespace-nowrap max-w-[140px] truncate">
+                            <td className="px-3 py-2 whitespace-nowrap max-w-[160px] truncate">
                               {r.rowType === "variant"
                                 ? (row?.variantName ?? row?.name ?? "")
                                 : (row?.name ?? "")}
@@ -843,26 +845,11 @@ export function BulkImportItemsDialog({
                             <td className="px-3 py-2 text-xs whitespace-nowrap text-muted-foreground">
                               {row?.attr1 || "—"}
                             </td>
-                            <td className="px-3 py-2 text-xs whitespace-nowrap text-muted-foreground">
-                              {row?.attr2 || "—"}
-                            </td>
-                            <td className="px-3 py-2 text-xs whitespace-nowrap text-muted-foreground">
-                              {row?.attr3 || "—"}
-                            </td>
                             <td className="px-3 py-2 whitespace-nowrap text-xs text-right">
                               {row?.salePrice || "—"}
                             </td>
-                            <td className="px-3 py-2 whitespace-nowrap text-xs text-right">
-                              {row?.purchasePrice || "—"}
-                            </td>
                             <td className="px-3 py-2 whitespace-nowrap text-xs text-right font-medium">
                               {row?.totalStock || "—"}
-                            </td>
-                            <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">
-                              {row?.category || "—"}
-                            </td>
-                            <td className="px-3 py-2 text-xs text-destructive whitespace-nowrap">
-                              {r.error ?? ""}
                             </td>
                           </tr>
                         );
