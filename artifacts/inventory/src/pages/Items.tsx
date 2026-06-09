@@ -502,6 +502,8 @@ export default function Items() {
       { header: "HSN Code", accessor: (r) => r.hsnCode ?? "" },
       { header: "Barcode", accessor: (r) => r.barcode ?? "" },
       { header: "Min Stock Level", accessor: (r) => r.reorderLevel },
+      { header: "Max Discount (%)", accessor: (r) => r.maxDiscountPercent ?? "" },
+      { header: "Max Discount (₹)", accessor: (r) => r.maxDiscountAmount ?? "" },
       { header: "Total Stock", accessor: (r) => r.totalStock },
     ],
     [],
@@ -956,9 +958,9 @@ export default function Items() {
           )}
           <ReportExportButton
             filename="items"
-            title="Items Export"
             columns={exportColumns}
             rows={exportRows}
+            hidePdf
           />
           <Store className="h-4 w-4 text-muted-foreground" />
           <Select

@@ -57,6 +57,8 @@ const TEMPLATE_HEADERS = [
   "HSN Code",
   "Barcode",
   "Min Stock Level",
+  "Max Discount (%)",
+  "Max Discount (₹)",
   "Total Stock",
 ] as const;
 
@@ -73,6 +75,8 @@ const TEMPLATE_DATA = [
     "3926",
     "8901234567894",
     "10",
+    "",
+    "",
     "50",
   ],
 ];
@@ -135,6 +139,13 @@ const HEADER_ALIASES: Record<string, keyof BulkImportItemRow> = {
   minstocklevel: "reorderLevel",
   reorder: "reorderLevel",
   totalstock: "totalStock",
+  "maxdiscount(%)": "maxDiscountPercent",
+  maxdiscountpercent: "maxDiscountPercent",
+  maxdiscount: "maxDiscountPercent",
+  "maxdiscount(rs)": "maxDiscountPercent",
+  "maxdiscount(₹)": "maxDiscountAmount",
+  maxdiscountamount: "maxDiscountAmount",
+  "maxdiscountamount(₹)": "maxDiscountAmount",
 };
 
 function buildRow(out: Partial<BulkImportItemRow>): BulkImportItemRow {
@@ -151,6 +162,8 @@ function buildRow(out: Partial<BulkImportItemRow>): BulkImportItemRow {
     barcode: str(out.barcode),
     taxRate: str(out.taxRate),
     reorderLevel: str(out.reorderLevel),
+    maxDiscountPercent: str(out.maxDiscountPercent),
+    maxDiscountAmount: str(out.maxDiscountAmount),
     totalStock: str(out.totalStock),
   };
 }
@@ -600,6 +613,8 @@ export function BulkImportItemsDialog({
                         <th className="px-3 py-2">HSN</th>
                         <th className="px-3 py-2">Barcode</th>
                         <th className="px-3 py-2">Min Stock</th>
+                        <th className="px-3 py-2">Max Disc %</th>
+                        <th className="px-3 py-2">Max Disc ₹</th>
                         <th className="px-3 py-2">Total Stock</th>
                         <th className="px-3 py-2">Error</th>
                       </tr>
@@ -664,6 +679,12 @@ export function BulkImportItemsDialog({
                             </td>
                             <td className="px-3 py-2 whitespace-nowrap text-xs text-right">
                               {row?.reorderLevel || "—"}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-xs text-right">
+                              {row?.maxDiscountPercent || "—"}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-xs text-right">
+                              {row?.maxDiscountAmount || "—"}
                             </td>
                             <td className="px-3 py-2 whitespace-nowrap text-xs text-right font-medium">
                               {row?.totalStock || "—"}

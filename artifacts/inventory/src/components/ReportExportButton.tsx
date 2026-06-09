@@ -24,6 +24,7 @@ type Props<T> = {
   rows: T[];
   disabled?: boolean;
   meta?: { label: string; value: string }[];
+  hidePdf?: boolean;
 };
 
 function safeFilename(name: string): string {
@@ -70,6 +71,7 @@ export function ReportExportButton<T>({
   rows,
   disabled,
   meta,
+  hidePdf,
 }: Props<T>) {
   const { toast } = useToast();
   const baseName = safeFilename(filename);
@@ -87,11 +89,6 @@ export function ReportExportButton<T>({
   const exportExcel = () => {
     const { headers, body } = rowsToMatrix(columns, rows);
     const sheetData: (string | number)[][] = [];
-    if (title) sheetData.push([title]);
-    if (meta && meta.length > 0) {
-      for (const m of meta) sheetData.push([`${m.label}: ${m.value}`]);
-    }
-    if (sheetData.length > 0) sheetData.push([]);
     sheetData.push(headers);
     for (const r of body) sheetData.push(r as (string | number)[]);
 
@@ -292,12 +289,14 @@ export function ReportExportButton<T>({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem
-          onSelect={onClick(exportPdf, "PDF")}
-          data-testid="menu-export-pdf"
-        >
-          PDF
-        </DropdownMenuItem>
+        {!hidePdf && (
+          <DropdownMenuItem
+            onSelect={onClick(exportPdf, "PDF")}
+            data-testid="menu-export-pdf"
+          >
+            PDF
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem
           onSelect={onClick(exportExcel, "Excel")}
           data-testid="menu-export-excel"

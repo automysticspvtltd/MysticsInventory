@@ -132,6 +132,10 @@ export function serializeItem(
       (i as unknown as { maxDiscountPercent?: string | null }).maxDiscountPercent != null
         ? toNum((i as unknown as { maxDiscountPercent: string }).maxDiscountPercent)
         : null,
+    maxDiscountAmount:
+      (i as unknown as { maxDiscountAmount?: string | null }).maxDiscountAmount != null
+        ? toNum((i as unknown as { maxDiscountAmount: string }).maxDiscountAmount)
+        : null,
   };
 }
 

@@ -60,6 +60,7 @@ export const itemsTable = pgTable(
     // cashier cannot apply a line-level discount exceeding this percentage.
     // NULL means no cap (any discount is allowed).
     maxDiscountPercent: numeric("max_discount_percent", { precision: 5, scale: 2 }),
+    maxDiscountAmount: numeric("max_discount_amount", { precision: 12, scale: 2 }),
     variantOptions: jsonb("variant_options"),
     shopifyProductId: text("shopify_product_id"),
     shopifyVariantId: text("shopify_variant_id"),

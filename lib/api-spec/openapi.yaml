@@ -3321,6 +3321,8 @@ components:
           type: boolean
           description: True when this item tracks individual production batches with manufacturing and expiry dates. Stock-in must capture batch metadata; stock-out must pick from existing batches. Cannot be enabled on a variant parent or a bundle.
         createdAt: { type: string }
+        maxDiscountPercent: { type: ["number", "null"] }
+        maxDiscountAmount: { type: ["number", "null"] }
       required:
         [
           id,
@@ -3508,6 +3510,12 @@ components:
         totalStock:
           type: ["number", "string", "null"]
           description: "When provided, sets opening stock in the org's primary warehouse. For upsert mode, applies the delta to reach this total. Ignored for bundles, variants, and batch-tracked items."
+        maxDiscountPercent:
+          type: ["number", "string", "null"]
+          description: "Max discount % cap (0–100). Null means no cap."
+        maxDiscountAmount:
+          type: ["number", "string", "null"]
+          description: "Max flat discount cap in rupees. Null means no cap."
       required: [sku, name]
 
     BulkImportItemsPayload:

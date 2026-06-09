@@ -577,6 +577,7 @@ router.post("/items", async (req, res, next) => {
               trackBatches,
               variantOptions: parentVariantOptions,
               maxDiscountPercent: b.maxDiscountPercent != null ? toStr(b.maxDiscountPercent) : null,
+              maxDiscountAmount: b.maxDiscountAmount != null ? toStr(b.maxDiscountAmount) : null,
             })
             .returning();
           const created = inserted[0]!;
@@ -662,6 +663,8 @@ interface BulkParsedRow {
   taxRate: number;
   reorderLevel: number;
   totalStock: number | null;
+  maxDiscountPercent: number | null;
+  maxDiscountAmount: number | null;
 }
 
 interface BulkResultRow {
@@ -822,6 +825,28 @@ router.post("/items/bulk-import", async (req, res, next) => {
         }
       }
 
+      let maxDiscountPercent: number | null = null;
+      {
+        const raw = r.maxDiscountPercent;
+        if (raw != null && raw !== "") {
+          const parsed = bulkParseNumber(raw, 0);
+          if (!parsed.ok) { fail("maxDiscountPercent is not a number"); return; }
+          if (parsed.value < 0 || parsed.value > 100) { fail("maxDiscountPercent must be between 0 and 100"); return; }
+          maxDiscountPercent = parsed.value;
+        }
+      }
+
+      let maxDiscountAmount: number | null = null;
+      {
+        const raw = r.maxDiscountAmount;
+        if (raw != null && raw !== "") {
+          const parsed = bulkParseNumber(raw, 0);
+          if (!parsed.ok) { fail("maxDiscountAmount is not a number"); return; }
+          if (parsed.value < 0) { fail("maxDiscountAmount cannot be negative"); return; }
+          maxDiscountAmount = parsed.value;
+        }
+      }
+
       parsedRows.push({
         index: idx,
         sku,
@@ -836,6 +861,8 @@ router.post("/items/bulk-import", async (req, res, next) => {
         taxRate: tax.value,
         reorderLevel: reorder.value,
         totalStock,
+        maxDiscountPercent,
+        maxDiscountAmount,
       });
       results.push({ index: idx, sku, action: "create" });
     });
@@ -1127,6 +1154,8 @@ router.post("/items/bulk-import", async (req, res, next) => {
               hsnCode: p.hsnCode,
               taxRate: toStr(p.taxRate),
               reorderLevel: toStr(p.reorderLevel),
+              maxDiscountPercent: p.maxDiscountPercent != null ? toStr(p.maxDiscountPercent) : null,
+              maxDiscountAmount: p.maxDiscountAmount != null ? toStr(p.maxDiscountAmount) : null,
               updatedAt: new Date(),
             })
             .where(

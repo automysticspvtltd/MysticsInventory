@@ -372,6 +372,10 @@ export interface Item {
   /** True when this item tracks individual production batches with manufacturing and expiry dates. Stock-in must capture batch metadata; stock-out must pick from existing batches. Cannot be enabled on a variant parent or a bundle. */
   trackBatches: boolean;
   createdAt: string;
+  /** @nullable */
+  maxDiscountPercent?: number | null;
+  /** @nullable */
+  maxDiscountAmount?: number | null;
 }
 
 export interface VariantStock {
@@ -508,6 +512,10 @@ export interface BulkImportItemRow {
    * @nullable
    */
   totalStock?: number | string | null;
+  /** @nullable */
+  maxDiscountPercent?: number | string | null;
+  /** @nullable */
+  maxDiscountAmount?: number | string | null;
 }
 
 /**
