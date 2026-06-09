@@ -539,38 +539,38 @@ export default function Barcodes() {
                 ))}
               </TableBody>
             </Table>
-            {totalPages > 1 && (
-              <div className="flex items-center justify-between pt-3 text-sm text-muted-foreground">
-                <span>
-                  {filtered.length} item{filtered.length !== 1 ? "s" : ""}
+            <div className="flex items-center justify-between px-1">
+              <p className="text-sm text-muted-foreground">
+                Showing {Math.min((page - 1) * ITEMS_PER_PAGE + 1, filtered.length)}–{Math.min(page * ITEMS_PER_PAGE, filtered.length)} of {filtered.length} items
+              </p>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  aria-label="Previous page"
+                  data-testid="btn-barcodes-prev-page"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="text-sm px-2">
+                  {page} / {totalPages}
                 </span>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    disabled={page === 1}
-                    data-testid="btn-barcodes-prev-page"
-                  >
-                    <ChevronLeft className="h-4 w-4 mr-1" />
-                    Prev
-                  </Button>
-                  <span>
-                    Page {page} of {totalPages}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                    disabled={page === totalPages}
-                    data-testid="btn-barcodes-next-page"
-                  >
-                    Next
-                    <ChevronRight className="h-4 w-4 ml-1" />
-                  </Button>
-                </div>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  aria-label="Next page"
+                  data-testid="btn-barcodes-next-page"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
               </div>
-            )}
+            </div>
             </>
           )}
         </CardContent>
