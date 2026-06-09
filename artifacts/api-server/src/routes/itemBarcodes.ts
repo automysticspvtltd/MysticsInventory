@@ -106,11 +106,11 @@ router.get("/items/barcode-labels.pdf", async (req, res, next) => {
     let logoPng: Buffer | null = null;
     {
       const orgRows = await db
-        .select({ logoUrl: organizationsTable.logoUrl })
+        .select({ logoUrl: organizationsTable.logoUrl, thermalLogoUrl: organizationsTable.thermalLogoUrl })
         .from(organizationsTable)
         .where(eq(organizationsTable.id, t.organizationId))
         .limit(1);
-      const logoUrl = orgRows[0]?.logoUrl ?? null;
+      const logoUrl = orgRows[0]?.thermalLogoUrl ?? orgRows[0]?.logoUrl ?? null;
       if (logoUrl && /^https?:\/\//i.test(logoUrl)) {
         try {
           const resp = await fetch(logoUrl, {

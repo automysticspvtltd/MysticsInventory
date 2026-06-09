@@ -200,18 +200,20 @@ export function Sidebar({
 }: SidebarProps) {
   const [location] = useLocation();
   const { data: org, isLoading: orgLoading } = useGetCurrentOrganization();
-  const { src: orgLogoSrc } = useImageSrc(org?.logoUrl);
+  const orgAny = org as (typeof org & { sidebarLogoUrl?: string | null; loginLogoUrl?: string | null }) | undefined;
+  const { src: orgLogoSrc } = useImageSrc(orgAny?.sidebarLogoUrl ?? org?.logoUrl);
+  const { src: loginLogoSrc } = useImageSrc(orgAny?.loginLogoUrl ?? org?.logoUrl);
   const { data: me } = useGetMe();
 
-  // Cache the resolved (signed) logo URL so the login page can show it
+  // Cache the resolved login logo URL so the login page can show it
   // without needing authenticated requests.
   useEffect(() => {
-    if (orgLogoSrc) {
-      try { localStorage.setItem("__erp_org_logo_src", orgLogoSrc); } catch { /* ignore */ }
-    } else if (org && !org.logoUrl) {
+    if (loginLogoSrc) {
+      try { localStorage.setItem("__erp_org_logo_src", loginLogoSrc); } catch { /* ignore */ }
+    } else if (org && !orgAny?.loginLogoUrl && !org.logoUrl) {
       try { localStorage.removeItem("__erp_org_logo_src"); } catch { /* ignore */ }
     }
-  }, [orgLogoSrc, org]);
+  }, [loginLogoSrc, org, orgAny?.loginLogoUrl]);
   const ctx = useOptionalSidebarCollapse();
   const collapsed = collapsible && ctx ? ctx.collapsed : false;
   const toggle = ctx?.toggle;

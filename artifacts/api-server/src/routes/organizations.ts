@@ -78,6 +78,9 @@ router.patch("/organizations/current", async (req, res, next) => {
       "postalCode",
       "country",
       "logoUrl",
+      "loginLogoUrl",
+      "sidebarLogoUrl",
+      "thermalLogoUrl",
       "invoiceFooter",
       "maxOrderDiscountPercent",
       "maxOrderDiscountAmount",
@@ -92,28 +95,25 @@ router.patch("/organizations/current", async (req, res, next) => {
       res.json(serializeOrganization(rows[0]!));
       return;
     }
-    if (typeof updates.logoUrl === "string" && updates.logoUrl.length > 0) {
-      const candidate = updates.logoUrl;
-      try {
-        if (candidate.startsWith("/objects/")) {
-          updates.logoUrl = await claimOrgLogoObject(
-            candidate,
-            t.organizationId,
-          );
+    for (const logoField of ["logoUrl", "loginLogoUrl", "sidebarLogoUrl", "thermalLogoUrl"] as const) {
+      if (typeof updates[logoField] === "string" && (updates[logoField] as string).length > 0) {
+        const candidate = updates[logoField] as string;
+        try {
+          if (candidate.startsWith("/objects/")) {
+            updates[logoField] = await claimOrgLogoObject(candidate, t.organizationId);
+          }
+        } catch (err) {
+          if (err instanceof ObjectNotFoundError) {
+            res.status(400).json({ error: "Uploaded logo not found in storage" });
+            return;
+          }
+          const status = (err as { status?: number }).status;
+          if (status === 403) {
+            res.status(403).json({ error: "That logo image belongs to another workspace." });
+            return;
+          }
+          throw err;
         }
-      } catch (err) {
-        if (err instanceof ObjectNotFoundError) {
-          res.status(400).json({ error: "Uploaded logo not found in storage" });
-          return;
-        }
-        const status = (err as { status?: number }).status;
-        if (status === 403) {
-          res.status(403).json({
-            error: "That logo image belongs to another workspace.",
-          });
-          return;
-        }
-        throw err;
       }
     }
     const updated = await db

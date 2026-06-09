@@ -20,7 +20,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useEffect, useRef, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Building2, FileCheck2, ChevronRight, ScanLine, ShoppingCart, Store, Plus, X } from "lucide-react";
+import { Building2, FileCheck2, ChevronRight, ScanLine, ShoppingCart, Store, Plus, X, ImageIcon } from "lucide-react";
 import { Link } from "wouter";
 import { ImageUploader } from "@/components/ImageUploader";
 
@@ -293,7 +293,7 @@ export default function Settings() {
                   name="logoUrl"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Logo</FormLabel>
+                      <FormLabel>Invoice Logo</FormLabel>
                       <FormControl>
                         <ImageUploader
                           value={field.value || null}
@@ -302,7 +302,7 @@ export default function Settings() {
                         />
                       </FormControl>
                       <FormDescription>
-                        Shown at the top of every invoice, purchase order and delivery challan, plus your sidebar. PNG/JPEG, up to 2 MB recommended.
+                        Shown at the top of every invoice, purchase order and delivery challan. PNG/JPEG, up to 2 MB recommended.
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -345,27 +345,9 @@ export default function Settings() {
         </CardContent>
       </Card>
 
-      <BarcodeSettingsCard />
+      <LogoSettingsCard />
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <ScanLine className="h-5 w-5 text-primary" />
-            Barcode Labels
-          </CardTitle>
-          <CardDescription>
-            Configure logo and format for printed barcode labels (50 mm × 25 mm thermal).
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Link href="/settings/barcode">
-            <Button variant="outline" className="w-full justify-between">
-              Open Label Settings
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </Link>
-        </CardContent>
-      </Card>
+      <BarcodeSettingsCard />
 
       <PosOrderDiscountCard />
 
@@ -667,6 +649,113 @@ function BarcodeSettingsCard() {
             data-testid="btn-save-barcode-settings"
           >
             {mutation.isPending ? "Saving…" : "Save barcode settings"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function LogoSettingsCard() {
+  const { data: org } = useGetCurrentOrganization();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const orgAny = org as (typeof org & {
+    loginLogoUrl?: string | null;
+    sidebarLogoUrl?: string | null;
+    thermalLogoUrl?: string | null;
+  }) | undefined;
+
+  const [loginLogoUrl, setLoginLogoUrl] = useState<string | null>(null);
+  const [sidebarLogoUrl, setSidebarLogoUrl] = useState<string | null>(null);
+  const [thermalLogoUrl, setThermalLogoUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (orgAny) {
+      setLoginLogoUrl(orgAny.loginLogoUrl ?? null);
+      setSidebarLogoUrl(orgAny.sidebarLogoUrl ?? null);
+      setThermalLogoUrl(orgAny.thermalLogoUrl ?? null);
+    }
+  }, [org]);
+
+  const mutation = useUpdateCurrentOrganization({
+    mutation: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getGetCurrentOrganizationQueryKey() });
+        toast({ title: "Logo settings saved" });
+      },
+      onError: () => {
+        toast({ title: "Could not save logo settings", variant: "destructive" });
+      },
+    },
+  });
+
+  if (!org) return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ImageIcon className="h-5 w-5 text-primary" />
+          Logo Settings
+        </CardTitle>
+        <CardDescription>
+          Upload separate logos for the login page, sidebar, and thermal barcode labels. Each logo is only used in its respective location. Leave blank to fall back to the Invoice Logo.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Login Page Logo</label>
+          <ImageUploader
+            value={loginLogoUrl}
+            onChange={(next) => setLoginLogoUrl(next ?? null)}
+            testId="login-logo"
+          />
+          <p className="text-xs text-muted-foreground">
+            Shown on the sign-in and sign-up screens. PNG/JPEG, up to 2 MB recommended.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Sidebar Logo</label>
+          <ImageUploader
+            value={sidebarLogoUrl}
+            onChange={(next) => setSidebarLogoUrl(next ?? null)}
+            testId="sidebar-logo"
+          />
+          <p className="text-xs text-muted-foreground">
+            Shown in the top-left of the app sidebar. PNG/JPEG, up to 2 MB recommended.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Thermal Print Logo (B&W)</label>
+          <ImageUploader
+            value={thermalLogoUrl}
+            onChange={(next) => setThermalLogoUrl(next ?? null)}
+            testId="thermal-logo"
+          />
+          <p className="text-xs text-muted-foreground">
+            Printed on 50 mm × 25 mm thermal barcode labels. Use a high-contrast black-and-white image for best results.
+          </p>
+        </div>
+
+        <div className="flex justify-end">
+          <Button
+            onClick={() =>
+              mutation.mutate({
+                data: {
+                  loginLogoUrl: loginLogoUrl || null,
+                  sidebarLogoUrl: sidebarLogoUrl || null,
+                  thermalLogoUrl: thermalLogoUrl || null,
+                } as Parameters<typeof mutation.mutate>[0]["data"],
+              })
+            }
+            disabled={mutation.isPending}
+            data-testid="btn-save-logo-settings"
+          >
+            {mutation.isPending ? "Saving…" : "Save logo settings"}
           </Button>
         </div>
       </CardContent>
