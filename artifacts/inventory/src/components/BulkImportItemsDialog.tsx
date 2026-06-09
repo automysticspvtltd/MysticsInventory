@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
+import * as XLSX from "xlsx";
 import {
   AlertCircle,
   CheckCircle2,
@@ -45,33 +46,35 @@ interface BulkImportItemsDialogProps {
 type Mode = "create" | "upsert";
 
 const TEMPLATE_HEADERS = [
-  "sku",
-  "name",
-  "description",
-  "category",
-  "unit",
-  "salePrice",
-  "purchasePrice",
-  "hsnCode",
-  "barcode",
-  "taxRate",
-  "reorderLevel",
+  "Name",
+  "SKU",
+  "Description",
+  "Category",
+  "Unit",
+  "Sale Price",
+  "MRP",
+  "Tax Rate %",
+  "HSN Code",
+  "Barcode",
+  "Min Stock Level",
+  "Total Stock",
 ] as const;
 
-const TEMPLATE_SAMPLE = [
-  {
-    sku: "WIDGET-001",
-    name: "Sample widget",
-    description: "Demo description (optional)",
-    category: "Demo",
-    unit: "pcs",
-    salePrice: "199",
-    purchasePrice: "120",
-    hsnCode: "3926",
-    barcode: "8901234567894",
-    taxRate: "18",
-    reorderLevel: "10",
-  },
+const TEMPLATE_DATA = [
+  [
+    "Sample Widget",
+    "WIDGET-001",
+    "Demo description (optional)",
+    "Demo",
+    "pcs",
+    "199",
+    "120",
+    "18",
+    "3926",
+    "8901234567894",
+    "10",
+    "50",
+  ],
 ];
 
 const MAX_ROWS = 1000;
@@ -80,7 +83,7 @@ function buildTemplateCsv(): string {
   return Papa.unparse(
     {
       fields: [...TEMPLATE_HEADERS],
-      data: TEMPLATE_SAMPLE.map((s) => TEMPLATE_HEADERS.map((h) => s[h])),
+      data: TEMPLATE_DATA,
     },
     { quotes: true },
   );
@@ -114,7 +117,7 @@ const HEADER_ALIASES: Record<string, keyof BulkImportItemRow> = {
   uom: "unit",
   saleprice: "salePrice",
   sellingprice: "salePrice",
-  mrp: "salePrice",
+  mrp: "purchasePrice",
   purchaseprice: "purchasePrice",
   costprice: "purchasePrice",
   cost: "purchasePrice",
@@ -125,11 +128,76 @@ const HEADER_ALIASES: Record<string, keyof BulkImportItemRow> = {
   upc: "barcode",
   gtin: "barcode",
   taxrate: "taxRate",
+  "taxrate%": "taxRate",
   gst: "taxRate",
   gstrate: "taxRate",
   reorderlevel: "reorderLevel",
+  minstocklevel: "reorderLevel",
   reorder: "reorderLevel",
+  totalstock: "totalStock",
 };
+
+function buildRow(out: Partial<BulkImportItemRow>): BulkImportItemRow {
+  const str = (v: unknown) => (v != null && String(v).trim() !== "" ? String(v).trim() : null);
+  return {
+    sku: String(out.sku ?? "").trim(),
+    name: String(out.name ?? "").trim(),
+    description: str(out.description),
+    category: str(out.category),
+    unit: str(out.unit),
+    salePrice: str(out.salePrice),
+    purchasePrice: str(out.purchasePrice),
+    hsnCode: str(out.hsnCode),
+    barcode: str(out.barcode),
+    taxRate: str(out.taxRate),
+    reorderLevel: str(out.reorderLevel),
+    totalStock: str(out.totalStock),
+  };
+}
+
+function processHeadersAndData(
+  headers: string[],
+  rawData: Record<string, string>[],
+): { rows: BulkImportItemRow[]; warnings: string[] } {
+  const warnings: string[] = [];
+  const headerMap: Record<string, keyof BulkImportItemRow> = {};
+  for (const h of headers) {
+    const normal = normaliseHeader(h);
+    const target = HEADER_ALIASES[normal];
+    if (target) headerMap[h] = target;
+  }
+  if (!Object.values(headerMap).includes("sku")) {
+    throw new Error(
+      "File is missing a `SKU` column. Download the template to see the required headers.",
+    );
+  }
+  if (!Object.values(headerMap).includes("name")) {
+    throw new Error(
+      "File is missing a `Name` column. Download the template to see the required headers.",
+    );
+  }
+  const ignoredHeaders = headers.filter((h) => !headerMap[h]);
+  if (ignoredHeaders.length > 0) {
+    warnings.push(
+      `Ignored unknown column${
+        ignoredHeaders.length > 1 ? "s" : ""
+      }: ${ignoredHeaders.join(", ")}`,
+    );
+  }
+  const rows: BulkImportItemRow[] = [];
+  for (const raw of rawData) {
+    const out: Partial<BulkImportItemRow> = {};
+    let touched = false;
+    for (const [csvHeader, target] of Object.entries(headerMap)) {
+      const value = raw[csvHeader];
+      if (value !== undefined && value !== null && value !== "") touched = true;
+      (out as Record<string, unknown>)[target] = value ?? "";
+    }
+    if (!touched) continue;
+    rows.push(buildRow(out));
+  }
+  return { rows, warnings };
+}
 
 function parseCsvFile(
   file: File,
@@ -140,70 +208,71 @@ function parseCsvFile(
       skipEmptyLines: "greedy",
       transformHeader: (h) => h.trim(),
       complete: (result) => {
-        const warnings: string[] = [];
-        const headers = result.meta.fields ?? [];
-        const headerMap: Record<string, keyof BulkImportItemRow> = {};
-        for (const h of headers) {
-          const normal = normaliseHeader(h);
-          const target = HEADER_ALIASES[normal];
-          if (target) headerMap[h] = target;
+        try {
+          const headers = result.meta.fields ?? [];
+          resolve(processHeadersAndData(headers, result.data));
+        } catch (err) {
+          reject(err);
         }
-        if (!Object.values(headerMap).includes("sku")) {
-          reject(
-            new Error(
-              "CSV is missing a `sku` column. Download the template to see the required headers.",
-            ),
-          );
-          return;
-        }
-        if (!Object.values(headerMap).includes("name")) {
-          reject(
-            new Error(
-              "CSV is missing a `name` column. Download the template to see the required headers.",
-            ),
-          );
-          return;
-        }
-        const ignoredHeaders = headers.filter((h) => !headerMap[h]);
-        if (ignoredHeaders.length > 0) {
-          warnings.push(
-            `Ignored unknown column${
-              ignoredHeaders.length > 1 ? "s" : ""
-            }: ${ignoredHeaders.join(", ")}`,
-          );
-        }
-        const rows: BulkImportItemRow[] = [];
-        for (const raw of result.data) {
-          const out: Partial<BulkImportItemRow> = {};
-          let touched = false;
-          for (const [csvHeader, target] of Object.entries(headerMap)) {
-            const value = raw[csvHeader];
-            if (value !== undefined && value !== null && value !== "") {
-              touched = true;
-            }
-            (out as Record<string, unknown>)[target] = value ?? "";
-          }
-          if (!touched) continue; // skip blank rows
-          rows.push({
-            sku: String(out.sku ?? "").trim(),
-            name: String(out.name ?? "").trim(),
-            description: out.description != null ? String(out.description) : null,
-            category: out.category != null ? String(out.category) : null,
-            unit: out.unit != null ? String(out.unit) : null,
-            salePrice: out.salePrice != null ? String(out.salePrice) : null,
-            purchasePrice:
-              out.purchasePrice != null ? String(out.purchasePrice) : null,
-            hsnCode: out.hsnCode != null ? String(out.hsnCode) : null,
-            barcode: out.barcode != null ? String(out.barcode) : null,
-            taxRate: out.taxRate != null ? String(out.taxRate) : null,
-            reorderLevel:
-              out.reorderLevel != null ? String(out.reorderLevel) : null,
-          });
-        }
-        resolve({ rows, warnings });
       },
       error: (err) => reject(err),
     });
+  });
+}
+
+function parseXlsxFile(
+  file: File,
+): Promise<{ rows: BulkImportItemRow[]; warnings: string[] }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target!.result as ArrayBuffer);
+        const wb = XLSX.read(data, { type: "array" });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        if (!sheet) {
+          reject(new Error("Excel file contains no sheets."));
+          return;
+        }
+        const aoa = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, {
+          header: 1,
+          defval: null,
+          blankrows: false,
+        });
+        // Find first row that contains a recognised column
+        let headerRowIdx = -1;
+        for (let i = 0; i < Math.min(aoa.length, 10); i++) {
+          const rowNorm = aoa[i].map((v) => normaliseHeader(String(v ?? "")));
+          if (rowNorm.some((n) => HEADER_ALIASES[n] !== undefined)) {
+            headerRowIdx = i;
+            break;
+          }
+        }
+        if (headerRowIdx === -1) {
+          reject(
+            new Error(
+              "Could not find a recognised header row in the Excel file. Download the template to see the required columns.",
+            ),
+          );
+          return;
+        }
+        const headers = aoa[headerRowIdx].map((v) => String(v ?? "").trim());
+        const rawData: Record<string, string>[] = aoa
+          .slice(headerRowIdx + 1)
+          .map((row) => {
+            const obj: Record<string, string> = {};
+            headers.forEach((h, i) => {
+              obj[h] = String(row[i] ?? "").trim();
+            });
+            return obj;
+          });
+        resolve(processHeadersAndData(headers, rawData));
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error("Failed to read Excel file."));
+      }
+    };
+    reader.onerror = () => reject(new Error("Failed to read file."));
+    reader.readAsArrayBuffer(file);
   });
 }
 
@@ -258,7 +327,12 @@ export function BulkImportItemsDialog({
     setResults(null);
     setCounts(null);
     try {
-      const { rows: parsed, warnings: parseWarnings } = await parseCsvFile(file);
+      const isXlsx =
+        file.name.toLowerCase().endsWith(".xlsx") ||
+        file.name.toLowerCase().endsWith(".xls");
+      const { rows: parsed, warnings: parseWarnings } = await (isXlsx
+        ? parseXlsxFile(file)
+        : parseCsvFile(file));
       if (parsed.length === 0) {
         setTopLevelError("No data rows found in the file.");
         setRows([]);
@@ -370,9 +444,10 @@ export function BulkImportItemsDialog({
         <DialogHeader>
           <DialogTitle>Bulk import items</DialogTitle>
           <DialogDescription>
-            Upload a CSV with up to {MAX_ROWS} rows. Required columns are{" "}
-            <code className="font-mono">sku</code> and{" "}
-            <code className="font-mono">name</code>.
+            Upload a CSV or Excel (.xlsx) file with up to {MAX_ROWS} rows.
+            Required columns are{" "}
+            <code className="font-mono">SKU</code> and{" "}
+            <code className="font-mono">Name</code>.
           </DialogDescription>
         </DialogHeader>
 
@@ -382,7 +457,7 @@ export function BulkImportItemsDialog({
             <input
               ref={fileInputRef}
               type="file"
-              accept=".csv,text/csv"
+              accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
               className="hidden"
               data-testid="input-bulk-import-file"
               onChange={(e) => {
@@ -398,7 +473,7 @@ export function BulkImportItemsDialog({
               data-testid="btn-bulk-import-choose-file"
             >
               <Upload className="mr-2 h-4 w-4" />
-              {hasFile ? "Choose another file" : "Choose CSV file"}
+              {hasFile ? "Choose another file" : "Choose CSV or Excel file"}
             </Button>
             <Button
               type="button"
@@ -506,60 +581,102 @@ export function BulkImportItemsDialog({
 
           {/* Preview table */}
           {hasFile && results && (
-            <div className="rounded-md border">
+            <div className="rounded-md border overflow-hidden">
               <ScrollArea className="h-[280px]">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/50 sticky top-0">
-                    <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                      <th className="px-3 py-2 w-12">#</th>
-                      <th className="px-3 py-2">SKU</th>
-                      <th className="px-3 py-2">Name</th>
-                      <th className="px-3 py-2 w-24">Action</th>
-                      <th className="px-3 py-2">Notes</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {results.map((r) => {
-                      const row = rows[r.index - 1];
-                      return (
-                        <tr
-                          key={r.index}
-                          className={cn(
-                            "border-t",
-                            r.action === "error" && "bg-destructive/5",
-                          )}
-                        >
-                          <td className="px-3 py-2 text-muted-foreground">
-                            {r.index}
-                          </td>
-                          <td className="px-3 py-2 font-mono text-xs">
-                            {r.sku || row?.sku || ""}
-                          </td>
-                          <td className="px-3 py-2 truncate max-w-[180px]">
-                            {row?.name || ""}
-                          </td>
-                          <td className="px-3 py-2">
-                            <Badge
-                              variant={
-                                r.action === "error"
-                                  ? "destructive"
-                                  : r.action === "update"
-                                    ? "secondary"
-                                    : "default"
-                              }
-                              className="text-[10px] capitalize"
-                            >
-                              {r.action}
-                            </Badge>
-                          </td>
-                          <td className="px-3 py-2 text-xs text-muted-foreground">
-                            {r.error ?? "—"}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                <div className="overflow-x-auto">
+                  <table className="w-max min-w-full text-sm">
+                    <thead className="bg-muted/50 sticky top-0">
+                      <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
+                        <th className="px-3 py-2 w-10">#</th>
+                        <th className="px-3 py-2 w-20">Status</th>
+                        <th className="px-3 py-2">SKU</th>
+                        <th className="px-3 py-2">Name</th>
+                        <th className="px-3 py-2">Description</th>
+                        <th className="px-3 py-2">Category</th>
+                        <th className="px-3 py-2">Unit</th>
+                        <th className="px-3 py-2">Sale Price</th>
+                        <th className="px-3 py-2">MRP</th>
+                        <th className="px-3 py-2">Tax %</th>
+                        <th className="px-3 py-2">HSN</th>
+                        <th className="px-3 py-2">Barcode</th>
+                        <th className="px-3 py-2">Min Stock</th>
+                        <th className="px-3 py-2">Total Stock</th>
+                        <th className="px-3 py-2">Error</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {results.map((r) => {
+                        const row = rows[r.index - 1];
+                        return (
+                          <tr
+                            key={r.index}
+                            className={cn(
+                              "border-t",
+                              r.action === "error" && "bg-destructive/5",
+                            )}
+                          >
+                            <td className="px-3 py-2 text-muted-foreground text-xs">
+                              {r.index}
+                            </td>
+                            <td className="px-3 py-2">
+                              <Badge
+                                variant={
+                                  r.action === "error"
+                                    ? "destructive"
+                                    : r.action === "update"
+                                      ? "secondary"
+                                      : "default"
+                                }
+                                className="text-[10px] capitalize"
+                              >
+                                {r.action}
+                              </Badge>
+                            </td>
+                            <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
+                              {r.sku || row?.sku || ""}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap max-w-[140px] truncate">
+                              {row?.name || ""}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap max-w-[120px] truncate text-xs text-muted-foreground">
+                              {row?.description || "—"}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">
+                              {row?.category || "—"}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">
+                              {row?.unit || "—"}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-xs text-right">
+                              {row?.salePrice || "—"}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-xs text-right">
+                              {row?.purchasePrice || "—"}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-xs text-right">
+                              {row?.taxRate || "—"}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">
+                              {row?.hsnCode || "—"}
+                            </td>
+                            <td className="px-3 py-2 font-mono text-xs whitespace-nowrap text-muted-foreground">
+                              {row?.barcode || "—"}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-xs text-right">
+                              {row?.reorderLevel || "—"}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-xs text-right font-medium">
+                              {row?.totalStock || "—"}
+                            </td>
+                            <td className="px-3 py-2 text-xs text-destructive whitespace-nowrap">
+                              {r.error ?? ""}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </ScrollArea>
             </div>
           )}

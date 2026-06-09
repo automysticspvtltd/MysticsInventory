@@ -503,6 +503,11 @@ export interface BulkImportItemRow {
   taxRate?: number | string | null;
   /** @nullable */
   reorderLevel?: number | string | null;
+  /**
+   * When provided, sets opening stock in the org's primary warehouse. For upsert mode, applies the delta to reach this total. Ignored for bundles, variants, and batch-tracked items.
+   * @nullable
+   */
+  totalStock?: number | string | null;
 }
 
 /**

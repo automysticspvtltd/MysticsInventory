@@ -491,13 +491,16 @@ export default function Items() {
 
   const exportColumns = useMemo(
     (): ExportColumn<Item>[] => [
-      { header: "SKU", accessor: (r) => r.sku },
-      { header: "Barcode", accessor: (r) => r.barcode ?? "" },
       { header: "Name", accessor: (r) => r.name },
+      { header: "SKU", accessor: (r) => r.sku },
+      { header: "Description", accessor: (r) => r.description ?? "" },
       { header: "Category", accessor: (r) => r.category ?? "" },
       { header: "Unit", accessor: (r) => r.unit },
       { header: "Sale Price", accessor: (r) => r.salePrice },
+      { header: "MRP", accessor: (r) => r.purchasePrice },
       { header: "Tax Rate %", accessor: (r) => r.taxRate },
+      { header: "HSN Code", accessor: (r) => r.hsnCode ?? "" },
+      { header: "Barcode", accessor: (r) => r.barcode ?? "" },
       { header: "Min Stock Level", accessor: (r) => r.reorderLevel },
       { header: "Total Stock", accessor: (r) => r.totalStock },
     ],

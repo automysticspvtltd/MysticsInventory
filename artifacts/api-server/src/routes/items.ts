@@ -661,6 +661,7 @@ interface BulkParsedRow {
   hsnCode: string | null;
   taxRate: number;
   reorderLevel: number;
+  totalStock: number | null;
 }
 
 interface BulkResultRow {
@@ -804,6 +805,23 @@ router.post("/items/bulk-import", async (req, res, next) => {
         return;
       }
 
+      let totalStock: number | null = null;
+      {
+        const rawTs = r.totalStock;
+        if (rawTs != null && rawTs !== "") {
+          const ts = bulkParseNumber(rawTs, 0);
+          if (!ts.ok) {
+            fail("totalStock is not a number");
+            return;
+          }
+          if (ts.value < 0) {
+            fail("totalStock cannot be negative");
+            return;
+          }
+          totalStock = ts.value;
+        }
+      }
+
       parsedRows.push({
         index: idx,
         sku,
@@ -817,6 +835,7 @@ router.post("/items/bulk-import", async (req, res, next) => {
         hsnCode,
         taxRate: tax.value,
         reorderLevel: reorder.value,
+        totalStock,
       });
       results.push({ index: idx, sku, action: "create" });
     });
@@ -989,6 +1008,40 @@ router.post("/items/bulk-import", async (req, res, next) => {
       }
     }
 
+    // Fetch primary (non-virtual) warehouse for opening-stock writes.
+    let primaryWarehouseId: number | null = null;
+    {
+      const wh = await db
+        .select({ id: warehousesTable.id })
+        .from(warehousesTable)
+        .where(
+          and(
+            eq(warehousesTable.organizationId, t.organizationId),
+            eq(warehousesTable.isVirtual, false),
+          ),
+        )
+        .orderBy(asc(warehousesTable.id))
+        .limit(1);
+      primaryWarehouseId = wh[0]?.id ?? null;
+    }
+
+    // Pre-fetch current total stock for upsert rows that carry a
+    // totalStock value so we can compute the delta inside the txn.
+    const preStockMap = new Map<number, number>();
+    {
+      const upsertWithStock: number[] = [];
+      for (let i = 0; i < parsedRows.length; i++) {
+        const p = parsedRows[i];
+        if (!p || results[i].action !== "update" || p.totalStock === null) continue;
+        const existing = existingMap.get(p.sku);
+        if (existing) upsertWithStock.push(existing.id);
+      }
+      if (upsertWithStock.length > 0) {
+        const stockMap = await totalStockFor(t.organizationId, upsertWithStock);
+        stockMap.forEach((qty, itemId) => preStockMap.set(itemId, qty));
+      }
+    }
+
     // Commit. Bounded retry around the whole txn so a per-org
     // unique-barcode race (another writer claimed the same auto value
     // between our generation and our insert) re-runs with a fresh
@@ -1014,7 +1067,7 @@ router.post("/items/bulk-import", async (req, res, next) => {
             bc = await generateUniqueBarcode(t.organizationId, tx);
             bcSrc = "auto";
           }
-          await tx.insert(itemsTable).values({
+          const [created] = await tx.insert(itemsTable).values({
             organizationId: t.organizationId,
             sku: p.sku,
             name: p.name,
@@ -1028,7 +1081,24 @@ router.post("/items/bulk-import", async (req, res, next) => {
             hsnCode: p.hsnCode,
             taxRate: toStr(p.taxRate),
             reorderLevel: toStr(p.reorderLevel),
-          });
+          }).returning({ id: itemsTable.id });
+          // Set opening stock if provided and a primary warehouse exists.
+          if (p.totalStock !== null && p.totalStock > 0 && primaryWarehouseId !== null) {
+            await tx.insert(itemWarehouseStockTable).values({
+              organizationId: t.organizationId,
+              itemId: created.id,
+              warehouseId: primaryWarehouseId,
+              quantity: toStr(p.totalStock),
+            });
+            await tx.insert(stockMovementsTable).values({
+              organizationId: t.organizationId,
+              itemId: created.id,
+              warehouseId: primaryWarehouseId,
+              movementType: "adjustment",
+              quantity: toStr(p.totalStock),
+              notes: "Bulk import",
+            });
+          }
         } else if (r.action === "update") {
           const existing = existingMap.get(p.sku)!;
           // In upsert mode we only overwrite barcode when the row
@@ -1065,6 +1135,50 @@ router.post("/items/bulk-import", async (req, res, next) => {
                 eq(itemsTable.organizationId, t.organizationId),
               ),
             );
+          // Apply stock delta to reach the target total.
+          if (p.totalStock !== null && primaryWarehouseId !== null) {
+            const currentQty = preStockMap.get(existing.id) ?? 0;
+            const delta = p.totalStock - currentQty;
+            if (delta !== 0) {
+              const stockRow = await tx
+                .select({ id: itemWarehouseStockTable.id, quantity: itemWarehouseStockTable.quantity })
+                .from(itemWarehouseStockTable)
+                .where(
+                  and(
+                    eq(itemWarehouseStockTable.organizationId, t.organizationId),
+                    eq(itemWarehouseStockTable.itemId, existing.id),
+                    eq(itemWarehouseStockTable.warehouseId, primaryWarehouseId),
+                  ),
+                )
+                .limit(1);
+              if (stockRow[0]) {
+                await tx
+                  .update(itemWarehouseStockTable)
+                  .set({ quantity: toStr(toNum(stockRow[0].quantity) + delta) })
+                  .where(
+                    and(
+                      eq(itemWarehouseStockTable.organizationId, t.organizationId),
+                      eq(itemWarehouseStockTable.id, stockRow[0].id),
+                    ),
+                  );
+              } else {
+                await tx.insert(itemWarehouseStockTable).values({
+                  organizationId: t.organizationId,
+                  itemId: existing.id,
+                  warehouseId: primaryWarehouseId,
+                  quantity: toStr(p.totalStock),
+                });
+              }
+              await tx.insert(stockMovementsTable).values({
+                organizationId: t.organizationId,
+                itemId: existing.id,
+                warehouseId: primaryWarehouseId,
+                movementType: "adjustment",
+                quantity: toStr(delta),
+                notes: "Bulk import",
+              });
+            }
+          }
         }
       }
         });
