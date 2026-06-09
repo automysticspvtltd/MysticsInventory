@@ -26,8 +26,10 @@ import {
 } from "@/components/ui/table";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus } from "lucide-react";
+import { Plus, ChevronLeft, ChevronRight } from "lucide-react";
 import { RecordSupplierPaymentDialog } from "@/components/RecordSupplierPaymentDialog";
+
+const ITEMS_PER_PAGE = 15;
 
 function useQueryString() {
   const [location] = useLocation();
@@ -48,6 +50,9 @@ export default function SupplierPayments() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [recordOpen, setRecordOpen] = useState(false);
+  const [page, setPage] = useState(1);
+
+  useEffect(() => setPage(1), [supplierFilter, modeFilter, from, to]);
 
   useEffect(() => {
     if (initialSupplierId) setSupplierFilter(initialSupplierId);
@@ -172,7 +177,7 @@ export default function SupplierPayments() {
                 </TableCell>
               </TableRow>
             ) : (
-              payments.map((p) => (
+              payments.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE).map((p) => (
                 <TableRow
                   key={p.id}
                   data-testid={`row-supplier-payment-${p.id}`}
@@ -209,6 +214,23 @@ export default function SupplierPayments() {
           </TableBody>
         </Table>
       </div>
+
+      {(payments?.length ?? 0) > 0 && (
+        <div className="flex items-center justify-between px-1">
+          <p className="text-sm text-muted-foreground">
+            Showing {Math.min((page - 1) * ITEMS_PER_PAGE + 1, payments!.length)}–{Math.min(page * ITEMS_PER_PAGE, payments!.length)} of {payments!.length}
+          </p>
+          <div className="flex items-center gap-1">
+            <Button variant="outline" size="icon" className="h-8 w-8" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))} aria-label="Previous page">
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <span className="text-sm px-2">{page} / {Math.max(1, Math.ceil(payments!.length / ITEMS_PER_PAGE))}</span>
+            <Button variant="outline" size="icon" className="h-8 w-8" disabled={page >= Math.ceil(payments!.length / ITEMS_PER_PAGE)} onClick={() => setPage(p => Math.min(Math.ceil(payments!.length / ITEMS_PER_PAGE), p + 1))} aria-label="Next page">
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
 
       {supplierIdNum && (
         <RecordSupplierPaymentDialog

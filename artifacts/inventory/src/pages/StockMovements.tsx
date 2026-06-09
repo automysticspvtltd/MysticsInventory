@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { useListStockMovements, useListItems, useListWarehouses } from "@/lib/queryKeys";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -6,10 +6,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label";
 import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+
+const ITEMS_PER_PAGE = 15;
 
 export default function StockMovements() {
   const [itemId, setItemId] = useState<number | undefined>();
   const [warehouseId, setWarehouseId] = useState<number | undefined>();
+  const [page, setPage] = useState(1);
+
+  useEffect(() => setPage(1), [itemId, warehouseId]);
 
   const { data: movements, isLoading } = useListStockMovements({
     itemId: itemId || undefined,
@@ -100,7 +107,7 @@ export default function StockMovements() {
                 <TableCell colSpan={7} className="h-24 text-center">No movements found.</TableCell>
               </TableRow>
             ) : (
-              movements?.map((movement) => (
+              (movements ?? []).slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE).map((movement) => (
                 <TableRow key={movement.id} data-testid={`row-movement-${movement.id}`}>
                   <TableCell className="text-muted-foreground whitespace-nowrap">
                     {format(new Date(movement.createdAt), "MMM d, yyyy h:mm a")}
@@ -121,6 +128,23 @@ export default function StockMovements() {
           </TableBody>
         </Table>
       </div>
+
+      {(movements?.length ?? 0) > 0 && (
+        <div className="flex items-center justify-between px-1">
+          <p className="text-sm text-muted-foreground">
+            Showing {Math.min((page - 1) * ITEMS_PER_PAGE + 1, movements!.length)}–{Math.min(page * ITEMS_PER_PAGE, movements!.length)} of {movements!.length}
+          </p>
+          <div className="flex items-center gap-1">
+            <Button variant="outline" size="icon" className="h-8 w-8" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))} aria-label="Previous page">
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <span className="text-sm px-2">{page} / {Math.max(1, Math.ceil(movements!.length / ITEMS_PER_PAGE))}</span>
+            <Button variant="outline" size="icon" className="h-8 w-8" disabled={page >= Math.ceil(movements!.length / ITEMS_PER_PAGE)} onClick={() => setPage(p => Math.min(Math.ceil(movements!.length / ITEMS_PER_PAGE), p + 1))} aria-label="Next page">
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

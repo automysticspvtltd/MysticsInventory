@@ -1,5 +1,5 @@
 import { Link } from "wouter";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import {
   useListStockTransfers,
@@ -14,7 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatDate } from "@/lib/format";
-import { Plus, ArrowRight } from "lucide-react";
+import { Plus, ArrowRight, ChevronLeft, ChevronRight } from "lucide-react";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
   Select,
@@ -28,11 +28,16 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
 
+const ITEMS_PER_PAGE = 15;
+
 export default function StockTransfers() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [warehouseFilter, setWarehouseFilter] = useState<string>("all");
   const [fromDate, setFromDate] = useState<string>("");
   const [toDate, setToDate] = useState<string>("");
+  const [page, setPage] = useState(1);
+
+  useEffect(() => setPage(1), [statusFilter, warehouseFilter, fromDate, toDate]);
 
   const { data: warehouses } = useListWarehouses();
   const { data: transfers, isLoading } = useListStockTransfers({
@@ -154,7 +159,7 @@ export default function StockTransfers() {
                 </TableCell>
               </TableRow>
             ) : (
-              transfers?.map((tr) => (
+              (transfers ?? []).slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE).map((tr) => (
                 <TableRow key={tr.id} data-testid={`row-transfer-${tr.id}`}>
                   <TableCell className="font-mono">
                     <Link
@@ -179,6 +184,23 @@ export default function StockTransfers() {
           </TableBody>
         </Table>
       </div>
+
+      {(transfers?.length ?? 0) > 0 && (
+        <div className="flex items-center justify-between px-1">
+          <p className="text-sm text-muted-foreground">
+            Showing {Math.min((page - 1) * ITEMS_PER_PAGE + 1, transfers!.length)}–{Math.min(page * ITEMS_PER_PAGE, transfers!.length)} of {transfers!.length}
+          </p>
+          <div className="flex items-center gap-1">
+            <Button variant="outline" size="icon" className="h-8 w-8" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))} aria-label="Previous page">
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <span className="text-sm px-2">{page} / {Math.max(1, Math.ceil(transfers!.length / ITEMS_PER_PAGE))}</span>
+            <Button variant="outline" size="icon" className="h-8 w-8" disabled={page >= Math.ceil(transfers!.length / ITEMS_PER_PAGE)} onClick={() => setPage(p => Math.min(Math.ceil(transfers!.length / ITEMS_PER_PAGE), p + 1))} aria-label="Next page">
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
