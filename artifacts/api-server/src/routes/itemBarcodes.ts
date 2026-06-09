@@ -229,6 +229,7 @@ router.post("/items/barcode-import", async (req, res, next) => {
 
     // Batch-fetch all items by SKU up front to avoid N+1.
     const skus = [...new Set(rows.map((r) => r.sku.trim()).filter(Boolean))];
+    req.log.info({ orgId: t.organizationId, skuCount: skus.length, skus }, "barcode-import: lookup");
     const existingItems = await db
       .select({ id: itemsTable.id, sku: itemsTable.sku })
       .from(itemsTable)
@@ -238,6 +239,7 @@ router.post("/items/barcode-import", async (req, res, next) => {
           eq(itemsTable.organizationId, t.organizationId),
         ),
       );
+    req.log.info({ foundCount: existingItems.length, found: existingItems.map((i) => i.sku) }, "barcode-import: found");
     const itemBySku = new Map(existingItems.map((i) => [i.sku, i.id]));
 
     let updated = 0;

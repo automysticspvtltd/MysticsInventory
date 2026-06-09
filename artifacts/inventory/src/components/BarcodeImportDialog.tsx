@@ -253,14 +253,21 @@ export function BarcodeImportDialog({ open, onOpenChange }: BarcodeImportDialogP
         headers: { "Content-Type": "application/json" },
       });
       setResult(res);
-      toast({
-        title: "Import complete",
-        description: `${res.updated} item${res.updated !== 1 ? "s" : ""} updated${res.failed > 0 ? `, ${res.failed} failed` : ""}.`,
-        variant: res.failed > 0 ? "destructive" : "default",
-      });
       queryClient.invalidateQueries({ queryKey: getListItemsQueryKey() });
-      reset();
-      onOpenChange(false);
+      if (res.failed === 0) {
+        toast({
+          title: "Import complete",
+          description: `${res.updated} item${res.updated !== 1 ? "s" : ""} updated.`,
+        });
+        reset();
+        onOpenChange(false);
+      } else {
+        toast({
+          title: "Import finished with errors",
+          description: `${res.updated} updated, ${res.failed} failed — see details below.`,
+          variant: "destructive",
+        });
+      }
     } catch (err) {
       setTopError(err instanceof Error ? err.message : "Import failed. Please try again.");
     } finally {
@@ -350,6 +357,25 @@ export function BarcodeImportDialog({ open, onOpenChange }: BarcodeImportDialogP
             <Alert variant="destructive">
               <AlertCircle className="h-4 w-4" />
               <AlertDescription>{topError}</AlertDescription>
+            </Alert>
+          )}
+
+          {result && result.failed > 0 && result.errors.length > 0 && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                <div className="font-medium mb-1">
+                  {result.updated} updated, {result.failed} failed:
+                </div>
+                <ul className="list-disc list-inside space-y-0.5 text-xs">
+                  {result.errors.slice(0, 20).map((e, i) => (
+                    <li key={i}>{e}</li>
+                  ))}
+                  {result.errors.length > 20 && (
+                    <li>…and {result.errors.length - 20} more</li>
+                  )}
+                </ul>
+              </AlertDescription>
             </Alert>
           )}
 
