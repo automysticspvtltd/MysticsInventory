@@ -45,7 +45,7 @@ export default function ReportLowStock() {
         </Button>
         <PageHeader 
           title="Low Stock Alerts" 
-          description="Items that are below their configured reorder level."
+          description="Items that are below their configured min stock level."
           className="mb-0"
         />
         <div className="ml-auto">

@@ -21,7 +21,7 @@ export default function Reports() {
     },
     {
       title: "Low Stock",
-      description: "Items that have fallen below their configured reorder level.",
+      description: "Items that have fallen below their configured min stock level.",
       href: "/reports/low-stock",
       icon: <AlertTriangle className="h-6 w-6" />,
       color: "text-red-600 bg-red-100 dark:text-red-400 dark:bg-red-900/30",

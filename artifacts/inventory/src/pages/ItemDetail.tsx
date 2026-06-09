@@ -473,7 +473,7 @@ export default function ItemDetail() {
               </div>
               <div>
                 <p className="text-sm font-medium text-muted-foreground">
-                  Purchase Price
+                  MRP
                 </p>
                 <p>
                   {isParent ? (
@@ -552,7 +552,7 @@ export default function ItemDetail() {
                   <p className="text-sm text-muted-foreground mt-1">
                     {isBundle
                       ? "Derived from current component stock."
-                      : `Reorder level: ${item.reorderLevel}`}
+                      : `Min stock level: ${item.reorderLevel}`}
                   </p>
                 </>
               )}
@@ -1224,7 +1224,7 @@ function VariantsCard({
                           Sale Price
                         </TableHead>
                         <TableHead className="min-w-[110px] text-right">
-                          Purchase Price
+                          MRP
                         </TableHead>
                         <TableHead className="min-w-[100px] text-right">
                           Stock

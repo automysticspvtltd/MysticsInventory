@@ -1576,7 +1576,7 @@ export default function Items() {
                   name="purchasePrice"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Purchase Price (₹) *</FormLabel>
+                      <FormLabel>MRP (₹) *</FormLabel>
                       <FormControl>
                         <Input
                           type="number"
@@ -1667,7 +1667,7 @@ export default function Items() {
                   name="reorderLevel"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Reorder Level *</FormLabel>
+                      <FormLabel>Min Stock Level *</FormLabel>
                       <FormControl>
                         <Input
                           type="number"
