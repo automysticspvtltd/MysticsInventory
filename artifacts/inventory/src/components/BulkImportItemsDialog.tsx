@@ -54,6 +54,7 @@ type UnifiedRow = {
   maxDiscountPercent: string | null;
   maxDiscountAmount: string | null;
   totalStock: string | null;
+  warehouseName: string | null;
   imageUrl: string | null;
   parentSku: string | null;
   variantName: string | null;
@@ -96,6 +97,7 @@ const TEMPLATE_HEADERS = [
   "Max Discount Percent",
   "Max Discount Amount",
   "Total Stock",
+  "Warehouse",
   "Image URL",
   "Parent Item",
   "Variant Name",
@@ -121,6 +123,7 @@ const TEMPLATE_DATA = [
     "",                // Max Discount Percent
     "",                // Max Discount Amount
     "50",              // Total Stock
+    "Main Warehouse",  // Warehouse ← name of warehouse to assign stock
     "",                // Image URL
     "",                // Parent Item  ← blank for simple / parent rows
     "",                // Variant Name ← blank for simple / parent rows
@@ -144,6 +147,7 @@ const TEMPLATE_DATA = [
     "",                // Max Discount Percent
     "",                // Max Discount Amount
     "",                // Total Stock (no stock on parent)
+    "",                // Warehouse
     "",                // Image URL
     "",                // Parent Item ← BLANK — this IS the parent
     "",                // Variant Name
@@ -167,6 +171,7 @@ const TEMPLATE_DATA = [
     "",                // Max Discount Percent
     "",                // Max Discount Amount
     "30",              // Total Stock
+    "Main Warehouse",  // Warehouse
     "",                // Image URL
     "TSHIRT-001",      // Parent Item ← SKU of the parent row above
     "T-Shirt Classic Red S", // Variant Name (optional display label)
@@ -176,26 +181,27 @@ const TEMPLATE_DATA = [
   ],
   // ── Row 4: Another variant of TSHIRT-001 ──────────────────────────
   [
-    "",
-    "TSHIRT-001-RED-L",
-    "",
-    "",
-    "",
-    "299",
-    "399",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "20",
-    "",
+    "",                // Name
+    "TSHIRT-001-RED-L", // SKU
+    "",                // Description
+    "",                // Category
+    "",                // Unit
+    "299",             // Sale Price
+    "399",             // MRP
+    "",                // Tax Rate %
+    "",                // HSN Code
+    "",                // Barcode
+    "",                // Min Stock Level
+    "",                // Max Discount Percent
+    "",                // Max Discount Amount
+    "20",              // Total Stock
+    "Main Warehouse",  // Warehouse
+    "",                // Image URL
     "TSHIRT-001",      // Parent Item ← same parent SKU
-    "T-Shirt Classic Red L",
+    "T-Shirt Classic Red L", // Variant Name
     "Red",             // Attribute 1
     "L",               // Attribute 2
-    "",
+    "",                // Attribute 3
   ],
 ];
 
@@ -278,6 +284,9 @@ const HEADER_ALIASES: Record<string, keyof UnifiedRow> = {
   imageurl: "imageUrl",
   image: "imageUrl",
   imgurl: "imageUrl",
+  warehouse: "warehouseName",
+  "warehouse name": "warehouseName",
+  warehousename: "warehouseName",
   "parent item": "parentSku",
   parentitem: "parentSku",
   "parent sku": "parentSku",
@@ -318,6 +327,7 @@ function buildRow(out: Partial<UnifiedRow>): UnifiedRow {
     maxDiscountPercent: str(out.maxDiscountPercent),
     maxDiscountAmount: str(out.maxDiscountAmount),
     totalStock: str(out.totalStock),
+    warehouseName: str(out.warehouseName),
     imageUrl: str(out.imageUrl),
     parentSku: str(out.parentSku),
     variantName: str(out.variantName),

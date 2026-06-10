@@ -564,6 +564,7 @@ export default function Items() {
       { header: "Max Discount Percent", accessor: (r) => r.maxDiscountPercent ?? "" },
       { header: "Max Discount Amount", accessor: (r) => r.maxDiscountAmount ?? "" },
       { header: "Total Stock", accessor: (r) => r.totalStock },
+      { header: "Warehouse", accessor: () => "" },
       { header: "Image URL", accessor: (r) => r.imageUrl ?? "" },
       {
         header: "Parent Item",
@@ -571,6 +572,13 @@ export default function Items() {
           r.parentItemId != null
             ? (parentInfoMap.get(r.parentItemId)?.sku ?? "")
             : "",
+      },
+      {
+        header: "Variant Name",
+        accessor: (r) => {
+          if (r.parentItemId == null) return "";
+          return variantLabel(r.variantOptions);
+        },
       },
       {
         header: "Attribute 1",

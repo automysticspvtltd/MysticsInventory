@@ -41,6 +41,7 @@ type SimpleParsed = {
   reorderLevel: number;
   imageUrl: string | null;
   totalStock: number | null;
+  warehouseName: string | null;
   maxDiscountPercent: number | null;
   maxDiscountAmount: number | null;
 };
@@ -54,6 +55,7 @@ type VariantParsed = {
   salePrice: number;
   purchasePrice: number;
   totalStock: number | null;
+  warehouseName: string | null;
   attr1: string;
   attr2: string;
   attr3: string;
@@ -195,6 +197,7 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
           salePrice: saleP.value,
           purchasePrice: purchP.value,
           totalStock,
+          warehouseName: oStr(r.warehouseName),
           attr1: fStr(r.attr1),
           attr2: fStr(r.attr2),
           attr3: fStr(r.attr3),
@@ -336,6 +339,7 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
           reorderLevel: reorderP.value,
           imageUrl,
           totalStock,
+          warehouseName: oStr(r.warehouseName),
           maxDiscountPercent,
           maxDiscountAmount,
         });
@@ -661,11 +665,12 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
       counts.error = results.filter((r) => r.action === "error").length;
     }
 
-    // ── Fetch primary warehouse ─────────────────────────────────────
+    // ── Fetch warehouses ─────────────────────────────────────────────
     let primaryWarehouseId: number | null = null;
+    const warehouseNameMap = new Map<string, number>(); // lowercase name → id
     {
       const wh = await db
-        .select({ id: warehousesTable.id })
+        .select({ id: warehousesTable.id, name: warehousesTable.name })
         .from(warehousesTable)
         .where(
           and(
@@ -673,13 +678,17 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
             eq(warehousesTable.isVirtual, false),
           ),
         )
-        .orderBy(asc(warehousesTable.id))
-        .limit(1);
-      primaryWarehouseId = wh[0]?.id ?? null;
+        .orderBy(asc(warehousesTable.id));
+      if (wh[0]) primaryWarehouseId = wh[0].id;
+      for (const w of wh) warehouseNameMap.set(w.name.toLowerCase(), w.id);
     }
+    const resolveWarehouseId = (name: string | null): number | null => {
+      if (!name || !name.trim()) return primaryWarehouseId;
+      return warehouseNameMap.get(name.toLowerCase().trim()) ?? primaryWarehouseId;
+    };
 
-    // ── Pre-fetch stock for upsert rows ─────────────────────────────
-    const preStockMap = new Map<number, number>();
+    // ── Pre-fetch stock for upsert rows (per warehouse) ──────────────
+    const preStockMap = new Map<string, number>(); // `${itemId}:${warehouseId}`
     {
       const ids: number[] = [];
       for (let j = 0; j < simpleParsed.length; j++) {
@@ -692,7 +701,8 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
         const rows = await db
           .select({
             itemId: itemWarehouseStockTable.itemId,
-            qty: sql<string>`COALESCE(SUM(${itemWarehouseStockTable.quantity}), 0)`,
+            warehouseId: itemWarehouseStockTable.warehouseId,
+            qty: itemWarehouseStockTable.quantity,
           })
           .from(itemWarehouseStockTable)
           .where(
@@ -700,9 +710,10 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
               eq(itemWarehouseStockTable.organizationId, t.organizationId),
               inArray(itemWarehouseStockTable.itemId, ids),
             ),
-          )
-          .groupBy(itemWarehouseStockTable.itemId);
-        for (const r of rows) preStockMap.set(r.itemId, toNum(r.qty));
+          );
+        for (const r of rows) {
+          preStockMap.set(`${r.itemId}:${r.warehouseId}`, toNum(r.qty));
+        }
       }
     }
 
@@ -752,21 +763,22 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
                 const pi = parentMap.get(p.sku);
                 if (pi) pi.id = created.id;
               }
+              const createWhId = resolveWarehouseId(p.warehouseName);
               if (
                 p.totalStock !== null &&
                 p.totalStock > 0 &&
-                primaryWarehouseId !== null
+                createWhId !== null
               ) {
                 await tx.insert(itemWarehouseStockTable).values({
                   organizationId: t.organizationId,
                   itemId: created.id,
-                  warehouseId: primaryWarehouseId,
+                  warehouseId: createWhId,
                   quantity: toStr(p.totalStock),
                 });
                 await tx.insert(stockMovementsTable).values({
                   organizationId: t.organizationId,
                   itemId: created.id,
-                  warehouseId: primaryWarehouseId,
+                  warehouseId: createWhId,
                   movementType: "adjustment",
                   quantity: toStr(p.totalStock),
                   notes: "Unified bulk import",
@@ -808,8 +820,9 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
                     eq(itemsTable.organizationId, t.organizationId),
                   ),
                 );
-              if (p.totalStock !== null && primaryWarehouseId !== null) {
-                const currentQty = preStockMap.get(existing.id) ?? 0;
+              const updateWhId = resolveWarehouseId(p.warehouseName);
+              if (p.totalStock !== null && updateWhId !== null) {
+                const currentQty = preStockMap.get(`${existing.id}:${updateWhId}`) ?? 0;
                 const delta = p.totalStock - currentQty;
                 if (delta !== 0) {
                   const stockRow = await tx
@@ -827,7 +840,7 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
                         eq(itemWarehouseStockTable.itemId, existing.id),
                         eq(
                           itemWarehouseStockTable.warehouseId,
-                          primaryWarehouseId,
+                          updateWhId,
                         ),
                       ),
                     )
@@ -853,14 +866,14 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
                     await tx.insert(itemWarehouseStockTable).values({
                       organizationId: t.organizationId,
                       itemId: existing.id,
-                      warehouseId: primaryWarehouseId,
+                      warehouseId: updateWhId,
                       quantity: toStr(p.totalStock),
                     });
                   }
                   await tx.insert(stockMovementsTable).values({
                     organizationId: t.organizationId,
                     itemId: existing.id,
-                    warehouseId: primaryWarehouseId,
+                    warehouseId: updateWhId,
                     movementType: "adjustment",
                     quantity: toStr(delta),
                     notes: "Unified bulk import",
@@ -919,21 +932,22 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
                 taxRate: parent.taxRate ?? "0",
               })
               .returning({ id: itemsTable.id });
+            const variantWhId = resolveWarehouseId(p.warehouseName);
             if (
               p.totalStock !== null &&
               p.totalStock > 0 &&
-              primaryWarehouseId !== null
+              variantWhId !== null
             ) {
               await tx.insert(itemWarehouseStockTable).values({
                 organizationId: t.organizationId,
                 itemId: created.id,
-                warehouseId: primaryWarehouseId,
+                warehouseId: variantWhId,
                 quantity: toStr(p.totalStock),
               });
               await tx.insert(stockMovementsTable).values({
                 organizationId: t.organizationId,
                 itemId: created.id,
-                warehouseId: primaryWarehouseId,
+                warehouseId: variantWhId,
                 movementType: "adjustment",
                 quantity: toStr(p.totalStock),
                 notes: "Unified bulk import",
