@@ -130,7 +130,7 @@ router.get("/items", async (req, res, next) => {
       // expands a parent to fetch its variants on demand.
       conds.push(sql`${itemsTable.parentItemId} IS NULL`);
     }
-    const rows = await db
+    let rows = await db
       .select()
       .from(itemsTable)
       .where(and(...conds))
@@ -179,6 +179,14 @@ router.get("/items", async (req, res, next) => {
         const found = perWh.find((w) => w.warehouseId === warehouseId);
         warehouseStockMap.set(id, found?.quantity ?? 0);
       }
+      // Keep only items that are actually assigned to this warehouse
+      // (have a row in item_warehouse_stock), regardless of quantity.
+      // Bundles are always included when a warehouse is selected since
+      // their stock is derived from components.
+      const assignedIds = new Set(warehouseStockMap.keys());
+      rows = rows.filter(
+        (r) => r.isBundle || assignedIds.has(r.id),
+      );
     }
 
     // Per-warehouse breakdown for the items list. One JOIN'd query for
@@ -211,7 +219,6 @@ router.get("/items", async (req, res, next) => {
             and(
               eq(itemWarehouseStockTable.organizationId, t.organizationId),
               inArray(itemWarehouseStockTable.itemId, physicalIds),
-              sql`${itemWarehouseStockTable.quantity} > 0`,
             ),
           );
         for (const r of breakdownRows) {
@@ -245,7 +252,7 @@ router.get("/items", async (req, res, next) => {
           breakdownMap.set(
             id,
             perWh
-              .filter((w) => w.quantity > 0 && whName.has(w.warehouseId))
+              .filter((w) => whName.has(w.warehouseId))
               .map((w) => ({
                 warehouseId: w.warehouseId,
                 warehouseName: whName.get(w.warehouseId)!,

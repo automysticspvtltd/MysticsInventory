@@ -473,20 +473,6 @@ export default function Items() {
   const filteredTopLevel = useMemo(() => {
     let result = grouped.topLevel;
 
-    // When a specific warehouse is selected, only show items that have
-    // positive stock there. For parent items (hasVariants), show only if
-    // at least one of their variants has stock at that warehouse.
-    if (warehouseFilter !== "all") {
-      result = result.filter((i) => {
-        if (i.hasVariants) {
-          return (grouped.byParent.get(i.id) ?? []).some(
-            (v) => (v.stockAtWarehouse ?? 0) > 0,
-          );
-        }
-        return (i.stockAtWarehouse ?? 0) > 0;
-      });
-    }
-
     if (categoryFilter) result = result.filter((i) => i.category === categoryFilter);
     // When a specific warehouse is selected, stock filters operate on that
     // warehouse's stock (stockAtWarehouse), not the org-wide total.
