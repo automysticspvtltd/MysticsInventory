@@ -196,11 +196,17 @@ const itemSchema = z
         "A bundle needs at least one component and component items cannot repeat",
     },
   )
-  .refine((v) => v.salePrice >= v.purchasePrice, {
-    path: ["salePrice"],
-    message:
-      "Sale price cannot be less than purchase price (would sell at a loss)",
-  });
+  .refine(
+    (v) =>
+      v.salePrice == null ||
+      v.purchasePrice == null ||
+      v.purchasePrice <= 0 ||
+      v.salePrice <= v.purchasePrice,
+    {
+      path: ["salePrice"],
+      message: "Sale price must not exceed MRP",
+    },
+  );
 
 type ItemFormValues = z.infer<typeof itemSchema>;
 
