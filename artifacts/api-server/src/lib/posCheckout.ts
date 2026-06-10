@@ -42,17 +42,22 @@ export interface PosCheckoutLineInput {
   description?: string | null;
 }
 
+export interface PosPaymentEntry {
+  mode: PosPaymentMode;
+  amount: number;
+  referenceNumber?: string | null;
+  bankAccountLabel?: string | null;
+  notes?: string | null;
+}
+
 export interface PosCheckoutInput {
   lines: PosCheckoutLineInput[];
   customerId?: number | null;
   warehouseId?: number | null;
-  payment: {
-    mode: PosPaymentMode;
-    amount: number;
-    referenceNumber?: string | null;
-    bankAccountLabel?: string | null;
-    notes?: string | null;
-  };
+  /** @deprecated Use payments array instead */
+  payment?: PosPaymentEntry;
+  /** Split payment entries — replaces the single payment field when provided */
+  payments?: PosPaymentEntry[];
   notes?: string | null;
   // Optional walk-in customer details. Captured on the order's `notes`
   // field — we deliberately do NOT create a permanent customer row for
@@ -205,15 +210,26 @@ export async function executePosCheckout(
       description: l.description ?? null,
     });
   }
-  if (
-    !input.payment ||
-    !POS_PAYMENT_MODES.includes(input.payment.mode) ||
-    !Number.isFinite(input.payment.amount) ||
-    input.payment.amount <= 0 ||
-    input.payment.amount > 1e9
-  ) {
-    throw new PosValidationError("Valid payment mode + amount in (0, 1e9] required");
+  // Normalise: prefer payments[] array, fall back to single payment field.
+  const paymentsArr: PosPaymentEntry[] = (() => {
+    if (Array.isArray(input.payments) && input.payments.length > 0) return input.payments;
+    if (input.payment) return [input.payment];
+    return [];
+  })();
+  if (paymentsArr.length === 0) {
+    throw new PosValidationError("At least one payment entry is required");
   }
+  for (const p of paymentsArr) {
+    if (
+      !POS_PAYMENT_MODES.includes(p.mode) ||
+      !Number.isFinite(p.amount) ||
+      p.amount <= 0 ||
+      p.amount > 1e9
+    ) {
+      throw new PosValidationError("Valid payment mode + amount in (0, 1e9] required");
+    }
+  }
+  const totalPaymentAmount = paymentsArr.reduce((s, p) => s + p.amount, 0);
 
   // Resolve customer + warehouse OUTSIDE the transaction (shorter
   // critical section). The walk-in helper is idempotent.
@@ -514,7 +530,7 @@ export async function executePosCheckout(
     const lineTotal = toNum(totals.total);
     const effectiveOrderDisc = Math.max(0, Math.min(orderDiscAmt, lineTotal));
     const effectiveTotal = lineTotal - effectiveOrderDisc;
-    const allocAmount = Math.min(input.payment.amount, effectiveTotal);
+    const allocAmount = Math.min(totalPaymentAmount, effectiveTotal);
     const inserted = await tx
       .insert(salesOrdersTable)
       .values({
@@ -609,38 +625,45 @@ export async function executePosCheckout(
       }
     }
 
-    // Capture the payment + allocation. We allocate min(captured,
-    // total); any tendered overpay is recorded as an unallocated
-    // advance against the customer (leaves outstandingBalance
-    // negative for that customer, which is the right shape for
-    // change due).
-    const paymentRows = await tx
-      .insert(customerPaymentsTable)
-      .values({
-        organizationId,
-        customerId,
-        paymentDate: today,
-        amount: toStr(input.payment.amount),
-        mode: input.payment.mode,
-        referenceNumber: input.payment.referenceNumber ?? null,
-        bankAccountLabel: input.payment.bankAccountLabel ?? null,
-        notes:
-          input.payment.notes ??
-          (channelLabel
-            ? `POS sale ${orderNumber} · ${channelLabel}`
-            : `POS sale ${orderNumber}`),
-      })
-      .returning({ id: customerPaymentsTable.id });
-    const customerPaymentId = paymentRows[0]!.id;
+    // Capture payments + allocations. For split payments we create one
+    // customer_payments row per entry and allocate in order until the
+    // order balance is covered. Any tendered overpay becomes an
+    // unallocated advance (negative outstandingBalance = change due).
+    const insertedPaymentIds: number[] = [];
+    let remainingAlloc = allocAmount;
+    for (const p of paymentsArr) {
+      const paymentRows = await tx
+        .insert(customerPaymentsTable)
+        .values({
+          organizationId,
+          customerId,
+          paymentDate: today,
+          amount: toStr(p.amount),
+          mode: p.mode,
+          referenceNumber: p.referenceNumber ?? null,
+          bankAccountLabel: p.bankAccountLabel ?? null,
+          notes:
+            p.notes ??
+            (channelLabel
+              ? `POS sale ${orderNumber} · ${channelLabel}`
+              : `POS sale ${orderNumber}`),
+        })
+        .returning({ id: customerPaymentsTable.id });
+      const paymentId = paymentRows[0]!.id;
+      insertedPaymentIds.push(paymentId);
 
-    if (allocAmount > 0) {
-      await tx.insert(customerPaymentAllocationsTable).values({
-        organizationId,
-        paymentId: customerPaymentId,
-        salesOrderId: order.id,
-        amount: toStr(allocAmount),
-      });
+      if (remainingAlloc > 0) {
+        const thisAlloc = Math.min(remainingAlloc, p.amount);
+        await tx.insert(customerPaymentAllocationsTable).values({
+          organizationId,
+          paymentId,
+          salesOrderId: order.id,
+          amount: toStr(thisAlloc),
+        });
+        remainingAlloc -= thisAlloc;
+      }
     }
+    const customerPaymentId = insertedPaymentIds[0]!;
     // NOTE: ::numeric cast on the parameter is required — without it,
     // Postgres treats the bound value as text and throws
     // `operator does not exist: numeric - text`, rolling back the
@@ -648,7 +671,7 @@ export async function executePosCheckout(
     await tx
       .update(customersTable)
       .set({
-        outstandingBalance: sql`${customersTable.outstandingBalance} - ${toStr(input.payment.amount)}::numeric`,
+        outstandingBalance: sql`${customersTable.outstandingBalance} - ${toStr(totalPaymentAmount)}::numeric`,
       })
       .where(
         and(

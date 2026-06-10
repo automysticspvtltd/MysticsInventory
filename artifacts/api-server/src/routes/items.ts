@@ -495,21 +495,19 @@ router.post("/items", async (req, res, next) => {
     }
     if (!hasVariants && !isBundle) {
       openingStock = toNum(b.openingStock);
-      if (openingStock > 0) {
-        const requestedWh = Number(b.openingWarehouseId);
-        if (requestedWh) {
-          const own = await assertOwnership({
-            organizationId: t.organizationId,
-            warehouseIds: [requestedWh],
-          });
-          if (!own.ok) {
-            res.status(400).json({ error: `Invalid ${own.missing}` });
-            return;
-          }
-          openingWarehouseId = requestedWh;
-        } else {
-          openingWarehouseId = await getDefaultWarehouseId(t.organizationId);
+      const requestedWh = Number(b.openingWarehouseId);
+      if (requestedWh) {
+        const own = await assertOwnership({
+          organizationId: t.organizationId,
+          warehouseIds: [requestedWh],
+        });
+        if (!own.ok) {
+          res.status(400).json({ error: `Invalid ${own.missing}` });
+          return;
         }
+        openingWarehouseId = requestedWh;
+      } else {
+        openingWarehouseId = await getDefaultWarehouseId(t.organizationId);
       }
     }
 
@@ -581,21 +579,23 @@ router.post("/items", async (req, res, next) => {
             })
             .returning();
           const created = inserted[0]!;
-          if (!hasVariants && !isBundle && openingStock > 0 && openingWarehouseId) {
+          if (!hasVariants && !isBundle && openingWarehouseId) {
             await tx.insert(itemWarehouseStockTable).values({
               organizationId: t.organizationId,
               itemId: created.id,
               warehouseId: openingWarehouseId,
               quantity: toStr(openingStock),
             });
-            await tx.insert(stockMovementsTable).values({
-              organizationId: t.organizationId,
-              itemId: created.id,
-              warehouseId: openingWarehouseId,
-              movementType: "opening",
-              quantity: toStr(openingStock),
-              notes: "Opening stock",
-            });
+            if (openingStock > 0) {
+              await tx.insert(stockMovementsTable).values({
+                organizationId: t.organizationId,
+                itemId: created.id,
+                warehouseId: openingWarehouseId,
+                movementType: "opening",
+                quantity: toStr(openingStock),
+                notes: "Opening stock",
+              });
+            }
           }
           if (isBundle && bundleComponents.length > 0) {
             await tx.insert(itemBundleComponentsTable).values(
@@ -2431,14 +2431,14 @@ router.post("/items/:id/variants", async (req, res, next) => {
           })
           .returning();
         created.push(row!);
+        const wh = p.openingWarehouseId ?? defaultWh;
+        await tx.insert(itemWarehouseStockTable).values({
+          organizationId: t.organizationId,
+          itemId: row!.id,
+          warehouseId: wh,
+          quantity: toStr(p.openingStock),
+        });
         if (p.openingStock > 0) {
-          const wh = p.openingWarehouseId ?? defaultWh;
-          await tx.insert(itemWarehouseStockTable).values({
-            organizationId: t.organizationId,
-            itemId: row!.id,
-            warehouseId: wh,
-            quantity: toStr(p.openingStock),
-          });
           await tx.insert(stockMovementsTable).values({
             organizationId: t.organizationId,
             itemId: row!.id,

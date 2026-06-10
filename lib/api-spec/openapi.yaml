@@ -6168,7 +6168,14 @@ components:
           items: { $ref: "#/components/schemas/PosCheckoutLine" }
         customerId: { type: ["integer", "null"] }
         warehouseId: { type: ["integer", "null"] }
-        payment: { $ref: "#/components/schemas/PosCheckoutPayment" }
+        payment:
+          allOf:
+            - { $ref: "#/components/schemas/PosCheckoutPayment" }
+          description: Single payment (backward compatible). Ignored when payments array is provided.
+        payments:
+          type: array
+          items: { $ref: "#/components/schemas/PosCheckoutPayment" }
+          description: Split payment entries. When provided, replaces the single payment field.
         notes: { type: ["string", "null"] }
         customerName: { type: string, minLength: 1 }
         customerPhone: { type: string, minLength: 1 }
@@ -6176,7 +6183,8 @@ components:
           type: ["string", "null"]
           enum: [walkin, website, store, whatsapp, phone, instagram, other, null]
           description: Mode of sale captured at the POS — used for channel-level reporting.
-      required: [lines, payment, customerName, customerPhone]
+        orderDiscountAmount: { type: ["number", "null"] }
+      required: [lines, customerName, customerPhone]
 
     PosCheckoutResult:
       type: object
