@@ -318,11 +318,17 @@ export default function POS() {
       toast({ title: "Cart is empty", variant: "destructive" });
       return;
     }
-    // Normalise splits: if only one split with no amount entered, use exact total.
-    const effectiveSplits: PaymentSplit[] =
-      splits.length === 1 && !splits[0]!.amount.trim()
-        ? [{ ...splits[0]!, amount: String(totals.total) }]
-        : splits;
+    // Normalise splits:
+    // 1. Single split with no amount → fill with the cart total.
+    // 2. Multi-split → drop any blank/zero entries so the backend never
+    //    receives an amount ≤ 0 (it rejects those with a validation error).
+    let effectiveSplits: PaymentSplit[];
+    if (splits.length === 1 && !splits[0]!.amount.trim()) {
+      effectiveSplits = [{ ...splits[0]!, amount: String(totals.total) }];
+    } else {
+      effectiveSplits = splits.filter((s) => Number(s.amount) > 0);
+      if (effectiveSplits.length === 0) effectiveSplits = splits;
+    }
     const totalPaid = effectiveSplits.reduce((s, p) => s + (Number(p.amount) || 0), 0);
     if (!Number.isFinite(totalPaid) || totalPaid <= 0) {
       toast({ title: "Enter a payment amount", variant: "destructive" });
