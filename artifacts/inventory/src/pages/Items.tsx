@@ -1352,15 +1352,28 @@ export default function Items() {
                       )}
                     </TableCell>
                     <TableCell>
-                      {isParent ? (
-                        <span className="text-muted-foreground">—</span>
-                      ) : (
-                        <WarehouseCell
-                          item={parent}
-                          scopedWarehouseName={scopedWarehouseName}
-                          testId={`text-warehouse-${parent.id}`}
-                        />
-                      )}
+                      <WarehouseCell
+                        item={isParent ? (() => {
+                          // Aggregate child variant warehouse data into a
+                          // synthetic breakdown so the parent row shows
+                          // the same warehouse info as its children.
+                          const variants = grouped.byParent.get(parent.id) ?? [];
+                          const byWh = new Map<number, { warehouseId: number; warehouseName: string; quantity: number }>();
+                          for (const v of variants) {
+                            for (const w of v.warehouseStock ?? []) {
+                              const existing = byWh.get(w.warehouseId);
+                              if (existing) {
+                                existing.quantity += w.quantity;
+                              } else {
+                                byWh.set(w.warehouseId, { ...w });
+                              }
+                            }
+                          }
+                          return { ...parent, warehouseStock: Array.from(byWh.values()) };
+                        })() : parent}
+                        scopedWarehouseName={scopedWarehouseName}
+                        testId={`text-warehouse-${parent.id}`}
+                      />
                     </TableCell>
                     <TableCell className="text-right">
                       {isParent ? (
@@ -1628,7 +1641,7 @@ export default function Items() {
                 )}
               />
 
-              {!editingItem?.hasVariants && !editingItem?.parentItemId && (
+              {!editingItem?.parentItemId && (
                 <div className="space-y-2">
                   <label className="text-sm font-medium leading-none">
                     Warehouse
