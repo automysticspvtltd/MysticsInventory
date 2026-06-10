@@ -1009,16 +1009,8 @@ function VariantsCard({
     salePrice: string;
     purchasePrice: string;
     openingStock: string;
-    openingWarehouseId: string;
   };
   const [rowDrafts, setRowDrafts] = useState<Record<string, RowDraft>>({});
-
-  // Warehouses available for opening stock — exclude virtual (job-work)
-  // warehouses since opening stock should land in a real location.
-  const stockWarehouses = useMemo(
-    () => warehouses.filter((w) => !(w as { isVirtual?: boolean }).isVirtual),
-    [warehouses],
-  );
 
   // Build the preview: cartesian product of axis values, filtered to
   // remove combinations that already exist on this parent.
@@ -1089,7 +1081,6 @@ function VariantsCard({
               salePrice: "0",
               purchasePrice: "0",
               openingStock: "0",
-              openingWarehouseId: "",
             };
       }
       return next;
@@ -1136,10 +1127,6 @@ function VariantsCard({
       const stock = Number(draft.openingStock || "0");
       if (!Number.isFinite(stock) || stock < 0) {
         errs[p.key] = "Stock must be zero or positive";
-        continue;
-      }
-      if (stock > 0 && !draft.openingWarehouseId) {
-        errs[p.key] = "Pick a warehouse for opening stock";
       }
     }
     return errs;
@@ -1154,17 +1141,12 @@ function VariantsCard({
       variants: preview.map((p) => {
         const d = rowDrafts[p.key]!;
         const stock = Number(d.openingStock || "0") || 0;
-        const whId = d.openingWarehouseId
-          ? Number(d.openingWarehouseId)
-          : null;
         return {
           sku: d.sku.trim(),
           options: p.options,
           salePrice: Number(d.salePrice) || 0,
           purchasePrice: Number(d.purchasePrice) || 0,
-          ...(stock > 0
-            ? { openingStock: stock, openingWarehouseId: whId }
-            : {}),
+          ...(stock > 0 ? { openingStock: stock } : {}),
         };
       }),
     });
@@ -1236,9 +1218,6 @@ function VariantsCard({
                         <TableHead className="min-w-[100px] text-right">
                           Stock
                         </TableHead>
-                        <TableHead className="min-w-[160px]">
-                          Warehouse
-                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1303,6 +1282,7 @@ function VariantsCard({
                                 type="text"
                                 inputMode="numeric"
                                 className="text-right"
+                                aria-invalid={stockErr ? true : undefined}
                                 value={d.openingStock}
                                 onChange={(e) =>
                                   updateRow(p.key, {
@@ -1311,44 +1291,6 @@ function VariantsCard({
                                 }
                                 data-testid={`input-variant-stock-${p.key}`}
                               />
-                            </TableCell>
-                            <TableCell>
-                              <Select
-                                value={d.openingWarehouseId || "__none__"}
-                                onValueChange={(v) =>
-                                  updateRow(p.key, {
-                                    openingWarehouseId:
-                                      v === "__none__" ? "" : v,
-                                  })
-                                }
-                              >
-                                <SelectTrigger
-                                  aria-invalid={
-                                    stockErr ? true : undefined
-                                  }
-                                  className={
-                                    stockErr
-                                      ? "border-destructive"
-                                      : undefined
-                                  }
-                                  data-testid={`select-variant-warehouse-${p.key}`}
-                                >
-                                  <SelectValue placeholder="Select…" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="__none__">
-                                    None
-                                  </SelectItem>
-                                  {stockWarehouses.map((w) => (
-                                    <SelectItem
-                                      key={w.id}
-                                      value={String(w.id)}
-                                    >
-                                      {w.name}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
                               {stockErr && (
                                 <p className="mt-1 text-xs text-destructive">
                                   {stockErr}
