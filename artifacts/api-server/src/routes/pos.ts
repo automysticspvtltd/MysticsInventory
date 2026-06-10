@@ -266,13 +266,22 @@ router.post("/pos/checkout", async (req, res, next) => {
       lines: Array.isArray(b.lines) ? b.lines : [],
       customerId: b.customerId ? Number(b.customerId) : null,
       warehouseId: b.warehouseId ? Number(b.warehouseId) : null,
-      payment: {
-        mode: b.payment?.mode,
-        amount: Number(b.payment?.amount),
-        referenceNumber: b.payment?.referenceNumber ?? null,
-        bankAccountLabel: b.payment?.bankAccountLabel ?? null,
-        notes: b.payment?.notes ?? null,
-      },
+      payments: Array.isArray(b.payments)
+        ? b.payments.map((p: { mode: string; amount: unknown; referenceNumber?: string | null }) => ({
+            mode: p.mode,
+            amount: Number(p.amount),
+            referenceNumber: p.referenceNumber ?? null,
+          }))
+        : undefined,
+      payment: b.payment
+        ? {
+            mode: b.payment.mode,
+            amount: Number(b.payment.amount),
+            referenceNumber: b.payment.referenceNumber ?? null,
+            bankAccountLabel: b.payment.bankAccountLabel ?? null,
+            notes: b.payment.notes ?? null,
+          }
+        : undefined,
       notes: b.notes ?? null,
       customerName: customerName ? customerName.slice(0, 200) : null,
       customerPhone: customerPhone ? customerPhone.slice(0, 50) : null,
