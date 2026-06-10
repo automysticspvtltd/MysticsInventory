@@ -88,6 +88,7 @@ function effectiveDiscount(l: CartLine): number {
 }
 
 type PaymentMode = "cash" | "upi" | "card";
+type PaymentSplit = { mode: PaymentMode; amount: string; ref: string };
 type SaleChannel =
   | "pos"
   | "walkin"
@@ -127,9 +128,7 @@ export default function POS() {
   const [walkinName, setWalkinName] = useState("");
   const [walkinPhone, setWalkinPhone] = useState("");
   const [saleChannel, setSaleChannel] = useState<SaleChannel>("pos");
-  const [paymentMode, setPaymentMode] = useState<PaymentMode>("cash");
-  const [tendered, setTendered] = useState<string>("");
-  const [paymentRef, setPaymentRef] = useState("");
+  const [splits, setSplits] = useState<PaymentSplit[]>([{ mode: "cash", amount: "", ref: "" }]);
   const [orderDiscountMode, setOrderDiscountMode] = useState<"percent" | "amount">("percent");
   const [orderDiscountPercent, setOrderDiscountPercent] = useState<number>(0);
   const [orderDiscountAmount, setOrderDiscountAmount] = useState<number>(0);
@@ -319,12 +318,13 @@ export default function POS() {
       toast({ title: "Cart is empty", variant: "destructive" });
       return;
     }
-    const tenderedNum = Number(tendered);
-    const amount =
-      Number.isFinite(tenderedNum) && tenderedNum > 0
-        ? tenderedNum
-        : totals.total;
-    if (!Number.isFinite(amount) || amount <= 0) {
+    // Normalise splits: if only one split with no amount entered, use exact total.
+    const effectiveSplits: PaymentSplit[] =
+      splits.length === 1 && !splits[0]!.amount.trim()
+        ? [{ ...splits[0]!, amount: String(totals.total) }]
+        : splits;
+    const totalPaid = effectiveSplits.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    if (!Number.isFinite(totalPaid) || totalPaid <= 0) {
       toast({ title: "Enter a payment amount", variant: "destructive" });
       return;
     }
@@ -385,16 +385,20 @@ export default function POS() {
         customerPhone: walkinPhone.trim() || null,
         saleChannel,
         orderDiscountAmount: totals.orderDiscount > 0 ? totals.orderDiscount : undefined,
-        payment: {
-          mode: paymentMode,
-          amount,
-          referenceNumber: paymentRef || null,
-        },
+        payments: effectiveSplits.map((s) => ({
+          mode: s.mode as "cash" | "card" | "upi" | "bank" | "other",
+          amount: Number(s.amount),
+          referenceNumber: s.ref || null,
+        })),
       } as Parameters<typeof posCheckout>[0]);
       setReceipt({
         ...result,
         _lines: [...cart.map((l) => ({ ...l })), ...bagReceiptLines],
-        _payment: { mode: paymentMode, amount, tendered: Number(tendered) || amount },
+        _payments: effectiveSplits.map((s) => ({
+          mode: s.mode,
+          amount: Number(s.amount),
+        })),
+        _totalPaid: totalPaid,
         _walkin: walkinName.trim() || walkinPhone.trim()
           ? { name: walkinName.trim(), phone: walkinPhone.trim() }
           : null,
@@ -402,15 +406,15 @@ export default function POS() {
         _orderDiscount: totals.orderDiscount,
       } as PosCheckoutResult & {
         _lines: CartLine[];
-        _payment: { mode: PaymentMode; amount: number; tendered: number };
+        _payments: { mode: PaymentMode; amount: number }[];
+        _totalPaid: number;
         _walkin: { name: string; phone: string } | null;
         _channel: SaleChannel;
         _orderDiscount: number;
       });
       setCart([]);
       setBagQtys(new Map());
-      setTendered("");
-      setPaymentRef("");
+      setSplits([{ mode: "cash", amount: "", ref: "" }]);
       setWalkinName("");
       setWalkinPhone("");
       setSaleChannel("pos");
@@ -475,11 +479,9 @@ export default function POS() {
     }
   }
 
-  const change = (() => {
-    const t = Number(tendered);
-    if (!Number.isFinite(t) || t <= 0) return 0;
-    return Math.max(0, t - totals.total);
-  })();
+  const splitTotal = splits.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const change = Math.max(0, splitTotal - totals.total);
+  const remaining = Math.max(0, totals.total - splitTotal);
 
   return (
     <div className="space-y-6">
@@ -798,37 +800,95 @@ export default function POS() {
               />
             </div>
 
-            {/* 4. Payment mode */}
-            <div className="space-y-1.5">
-              <Label>Payment mode</Label>
-              <div className="grid grid-cols-3 gap-2">
-                {(Object.keys(PAYMENT_LABELS) as PaymentMode[]).map((m) => (
-                  <Button
-                    key={m}
-                    type="button"
-                    variant={paymentMode === m ? "default" : "outline"}
-                    onClick={() => setPaymentMode(m)}
-                    data-testid={`btn-pos-mode-${m}`}
-                  >
-                    {PAYMENT_LABELS[m]}
-                  </Button>
-                ))}
-              </div>
+            {/* 4. Payment (split-capable) */}
+            <div className="space-y-2">
+              <Label>Payment</Label>
+              {splits.map((split, idx) => (
+                <div key={idx} className="rounded-md border p-2 space-y-2">
+                  <div className="flex items-center gap-1">
+                    <div className="grid grid-cols-3 gap-1 flex-1">
+                      {(Object.keys(PAYMENT_LABELS) as PaymentMode[]).map((m) => (
+                        <Button
+                          key={m}
+                          type="button"
+                          size="sm"
+                          variant={split.mode === m ? "default" : "outline"}
+                          onClick={() =>
+                            setSplits((prev) =>
+                              prev.map((s, i) => (i === idx ? { ...s, mode: m } : s))
+                            )
+                          }
+                          data-testid={`btn-pos-mode-${m}-${idx}`}
+                        >
+                          {PAYMENT_LABELS[m]}
+                        </Button>
+                      ))}
+                    </div>
+                    {splits.length > 1 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 shrink-0"
+                        onClick={() =>
+                          setSplits((prev) => prev.filter((_, i) => i !== idx))
+                        }
+                        aria-label="Remove split"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      value={split.amount}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        if (raw === "" || /^\d*\.?\d*$/.test(raw))
+                          setSplits((prev) =>
+                            prev.map((s, i) => (i === idx ? { ...s, amount: raw } : s))
+                          );
+                      }}
+                      placeholder={
+                        idx === 0 && splits.length === 1
+                          ? String(totals.total.toFixed(2))
+                          : "0.00"
+                      }
+                      className="flex-1"
+                      data-testid={`input-pos-amount-${idx}`}
+                    />
+                    {split.mode !== "cash" && (
+                      <Input
+                        value={split.ref}
+                        onChange={(e) =>
+                          setSplits((prev) =>
+                            prev.map((s, i) => (i === idx ? { ...s, ref: e.target.value } : s))
+                          )
+                        }
+                        placeholder="Txn / UTR"
+                        className="flex-1"
+                        data-testid={`input-pos-ref-${idx}`}
+                      />
+                    )}
+                  </div>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={() =>
+                  setSplits((prev) => [...prev, { mode: "cash", amount: "", ref: "" }])
+                }
+                data-testid="btn-pos-add-split"
+              >
+                <Plus className="mr-2 h-3.5 w-3.5" />
+                Add split payment
+              </Button>
             </div>
-
-            {/* 5. Reference (non-cash) */}
-            {paymentMode !== "cash" && (
-              <div className="space-y-1.5">
-                <Label htmlFor="pos-ref">Reference</Label>
-                <Input
-                  id="pos-ref"
-                  value={paymentRef}
-                  onChange={(e) => setPaymentRef(e.target.value)}
-                  placeholder="Txn / UTR / last 4 digits"
-                  data-testid="input-pos-reference"
-                />
-              </div>
-            )}
 
             {/* 5b. Bag counter */}
             {bagItems.length > 0 && (
@@ -932,26 +992,7 @@ export default function POS() {
               </div>
             </div>
 
-            {/* 7. Amount */}
-            <div className="space-y-1.5">
-              <Label htmlFor="pos-tendered">
-                Amount <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="pos-tendered"
-                type="text"
-                inputMode="decimal"
-                value={tendered}
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  if (raw === "" || /^\d*\.?\d*$/.test(raw)) setTendered(raw);
-                }}
-                placeholder={formatCurrency(totals.total)}
-                data-testid="input-pos-tendered"
-              />
-            </div>
-
-            {/* 8. Summary */}
+            {/* 7. Summary */}
             <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-1.5 tabular-nums">
               <Row label="Subtotal" value={totals.subtotal} />
               {totals.itemDiscount > 0 && (
@@ -964,6 +1005,9 @@ export default function POS() {
               <div className="border-t pt-1.5">
                 <Row label="Total" value={totals.total} bold />
               </div>
+              {splitTotal > 0 && remaining > 0 && (
+                <Row label="Remaining" value={remaining} muted />
+              )}
               {change > 0 && (
                 <Row label="Change due" value={change} muted />
               )}
@@ -972,7 +1016,7 @@ export default function POS() {
             <Button
               className="w-full"
               size="lg"
-              disabled={submitting || cart.length === 0 || !tendered.trim()}
+              disabled={submitting || cart.length === 0}
               onClick={handleCheckout}
               data-testid="btn-pos-checkout"
             >
@@ -1072,7 +1116,8 @@ export default function POS() {
 
 type ThermalReceiptData = PosCheckoutResult & {
   _lines?: CartLine[];
-  _payment?: { mode: PaymentMode; amount: number; tendered: number };
+  _payments?: { mode: PaymentMode; amount: number }[];
+  _totalPaid?: number;
   _walkin?: { name: string; phone: string } | null;
   _channel?: SaleChannel;
   _orderDiscount?: number;
@@ -1108,11 +1153,10 @@ function ThermalReceipt({ receipt }: { receipt: PosCheckoutResult | null }) {
   const staffName = me?.user?.name || me?.user?.email || "";
   const tax = r ? Number(r.taxTotal) : 0;
   const total = r ? Number(r.total) : 0;
-  const paymentLabel = r?._payment ? PAYMENT_LABELS[r._payment.mode] : "Cash";
-  const amountPaid = r?._payment?.amount ?? total;
-  const tendered = r?._payment?.tendered ?? amountPaid;
-  const change = Math.max(0, tendered - total);
-  const balanceDue = Math.max(0, total - amountPaid);
+  const payments = r?._payments ?? [];
+  const totalPaid = r?._totalPaid ?? (payments.length > 0 ? payments.reduce((s, p) => s + p.amount, 0) : total);
+  const change = Math.max(0, totalPaid - total);
+  const balanceDue = Math.max(0, total - totalPaid);
   const orderDiscount = r?._orderDiscount ?? 0;
 
   // Compute per-line numbers for the receipt
@@ -1282,6 +1326,28 @@ function ThermalReceipt({ receipt }: { receipt: PosCheckoutResult | null }) {
                   <td colSpan={3}>TOTAL</td>
                   <td className="r">RS {total.toFixed(2)}</td>
                 </tr>
+                {payments.length > 0 && (
+                  <>
+                    {payments.map((p, i) => (
+                      <tr key={i}>
+                        <td colSpan={3}>{PAYMENT_LABELS[p.mode] ?? p.mode}</td>
+                        <td className="r">{p.amount.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                    {change > 0 && (
+                      <tr>
+                        <td colSpan={3}>Change</td>
+                        <td className="r">-{change.toFixed(2)}</td>
+                      </tr>
+                    )}
+                    {balanceDue > 0 && (
+                      <tr>
+                        <td colSpan={3}>Balance Due</td>
+                        <td className="r">{balanceDue.toFixed(2)}</td>
+                      </tr>
+                    )}
+                  </>
+                )}
               </tfoot>
             </table>
             <div className="sep" />
