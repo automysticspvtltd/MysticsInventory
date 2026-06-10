@@ -267,7 +267,7 @@ const WAREHOUSE_FILTER_KEY = "items.warehouseFilter";
  * is picked the cell just shows that warehouse's name; under the "all
  * warehouses" view it shows the warehouse holding the most stock plus
  * a "+N more" badge with a hover breakdown when stock is split. Items
- * with zero stock everywhere render as "—".
+ * with no warehouse assignment render as "—".
  */
 function WarehouseCell({
   item,
@@ -285,7 +285,7 @@ function WarehouseCell({
       </span>
     );
   }
-  const breakdown = (item.warehouseStock ?? []).filter((w) => w.quantity > 0);
+  const breakdown = item.warehouseStock ?? [];
   if (breakdown.length === 0) {
     return (
       <span data-testid={testId} className="text-muted-foreground">
@@ -293,10 +293,8 @@ function WarehouseCell({
       </span>
     );
   }
-  // Sort by quantity desc so the warehouse with the most stock wins.
-  // Tie-break by warehouseName so the result is deterministic when two
-  // warehouses hold the same quantity (otherwise the API row order would
-  // leak into the UI and the "top" cell could flip on every refresh).
+  // Sort by quantity desc (warehouses with stock first) then by name for
+  // a deterministic tie-break.
   const sorted = [...breakdown].sort(
     (a, b) =>
       b.quantity - a.quantity ||
