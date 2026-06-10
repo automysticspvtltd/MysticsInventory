@@ -1,4 +1,16 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { Check, ChevronsUpDown } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -6,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { FormControl, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 
 export type ItemForPicker = {
   id: number;
@@ -62,6 +74,8 @@ export function ItemPicker({
   disabledMessage,
   emptyMessage,
 }: Props) {
+  const [open, setOpen] = useState(false);
+
   const { topLevel, childrenByParent } = useMemo(() => {
     const top: ItemForPicker[] = [];
     const byParent = new Map<number, ItemForPicker[]>();
@@ -94,56 +108,85 @@ export function ItemPicker({
       ? childrenByParent.get(parentItem.id) ?? []
       : [];
 
+  const triggerLabel = (() => {
+    if (disabled && disabledMessage) return disabledMessage;
+    if (!disabled && topLevel.length === 0 && emptyMessage) return emptyMessage;
+    if (!parentItem) return "Select item";
+    const stockSuffix =
+      showStockHint && !parentItem.hasVariants && parentItem.stockAtWarehouse != null
+        ? ` (stock: ${parentItem.stockAtWarehouse})`
+        : "";
+    return `${parentItem.sku} - ${parentItem.name}${parentItem.hasVariants ? " (has variants)" : stockSuffix}`;
+  })();
+
   return (
     <div className="space-y-2">
       <FormItem>
         <FormLabel className="text-xs">Item</FormLabel>
-        <Select
-          disabled={disabled}
-          onValueChange={(val) => {
-            const pid = parseInt(val, 10);
-            onParentChange(pid);
-          }}
-          value={effectiveParentId ? effectiveParentId.toString() : ""}
-        >
-          <FormControl>
-            <SelectTrigger data-testid={`${testIdPrefix}-parent`}>
-              <SelectValue
-                placeholder={
-                  disabled && disabledMessage
-                    ? disabledMessage
-                    : !disabled && topLevel.length === 0 && emptyMessage
-                      ? emptyMessage
-                      : "Select item"
-                }
-              />
-            </SelectTrigger>
-          </FormControl>
-          <SelectContent>
-            {topLevel.length === 0 ? (
-              <div
-                className="px-2 py-1.5 text-sm text-muted-foreground"
-                data-testid={`${testIdPrefix}-empty`}
-              >
-                {disabled && disabledMessage
-                  ? disabledMessage
-                  : emptyMessage ?? "No items available"}
-              </div>
-            ) : null}
-            {topLevel.map((i) => {
-              const stockSuffix =
-                showStockHint && !i.hasVariants && i.stockAtWarehouse != null
-                  ? ` (stock: ${i.stockAtWarehouse})`
-                  : "";
-              return (
-                <SelectItem key={i.id} value={i.id.toString()}>
-                  {i.sku} - {i.name}
-                  {i.hasVariants ? " (has variants)" : stockSuffix}
-                </SelectItem>
-              );
-            })}
-          </SelectContent>
-        </Select>
+        <Popover open={open} onOpenChange={disabled ? undefined : setOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              role="combobox"
+              aria-expanded={open}
+              disabled={disabled}
+              data-testid={`${testIdPrefix}-parent`}
+              className={cn(
+                "w-full justify-between font-normal h-10 px-3",
+                !parentItem && "text-muted-foreground",
+              )}
+            >
+              <span className="truncate text-left">{triggerLabel}</span>
+              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            className="p-0"
+            style={{ width: "var(--radix-popover-trigger-width)" }}
+            align="start"
+          >
+            <Command
+              filter={(value, search) => {
+                if (!search) return 1;
+                const lower = search.toLowerCase();
+                return value.toLowerCase().includes(lower) ? 1 : 0;
+              }}
+            >
+              <CommandInput placeholder="Search by name or SKU…" />
+              <CommandList>
+                <CommandEmpty>No items found.</CommandEmpty>
+                <CommandGroup>
+                  {topLevel.map((i) => {
+                    const stockSuffix =
+                      showStockHint && !i.hasVariants && i.stockAtWarehouse != null
+                        ? ` (stock: ${i.stockAtWarehouse})`
+                        : "";
+                    const label = `${i.sku} - ${i.name}${i.hasVariants ? " (has variants)" : stockSuffix}`;
+                    return (
+                      <CommandItem
+                        key={i.id}
+                        value={label}
+                        onSelect={() => {
+                          onParentChange(i.id);
+                          setOpen(false);
+                        }}
+                      >
+                        <Check
+                          className={cn(
+                            "mr-2 h-4 w-4 shrink-0",
+                            effectiveParentId === i.id ? "opacity-100" : "opacity-0",
+                          )}
+                        />
+                        <span className="truncate">{label}</span>
+                      </CommandItem>
+                    );
+                  })}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
         {!parentItem?.hasVariants && errorMessage ? (
           <FormMessage>{errorMessage}</FormMessage>
         ) : null}
@@ -160,17 +203,15 @@ export function ItemPicker({
             }}
             value={selectedItemId ? selectedItemId.toString() : ""}
           >
-            <FormControl>
-              <SelectTrigger data-testid={`${testIdPrefix}-variant`}>
-                <SelectValue
-                  placeholder={
-                    variants.length === 0
-                      ? "No variants yet — add some on the item page"
-                      : "Select variant"
-                  }
-                />
-              </SelectTrigger>
-            </FormControl>
+            <SelectTrigger data-testid={`${testIdPrefix}-variant`}>
+              <SelectValue
+                placeholder={
+                  variants.length === 0
+                    ? "No variants yet — add some on the item page"
+                    : "Select variant"
+                }
+              />
+            </SelectTrigger>
             <SelectContent>
               {variants.map((v) => {
                 const lbl = variantLabel(v.variantOptions);
@@ -187,8 +228,8 @@ export function ItemPicker({
                 );
               })}
             </SelectContent>
+            {errorMessage ? <FormMessage>{errorMessage}</FormMessage> : null}
           </Select>
-          {errorMessage ? <FormMessage>{errorMessage}</FormMessage> : null}
         </FormItem>
       ) : null}
     </div>
