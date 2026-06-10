@@ -18,7 +18,7 @@ import {
   useGetMe,
   useRecordPrint,
 } from "@/lib/queryKeys";
-import { useDeleteSalesOrder } from "@workspace/api-client-react";
+import { useDeleteSalesOrder, useListCustomerPayments, getListCustomerPaymentsQueryKey } from "@workspace/api-client-react";
 import { normalizeRole } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -121,6 +121,11 @@ export default function SalesOrderDetail() {
     },
   );
 
+  const { data: orderPayments } = useListCustomerPayments(
+    { salesOrderId: orderId },
+    { query: { enabled: !!orderId } },
+  );
+
   const invalidateAll = () => {
     queryClient.invalidateQueries({ queryKey: getGetSalesOrderQueryKey(orderId) });
     queryClient.invalidateQueries({
@@ -131,6 +136,9 @@ export default function SalesOrderDetail() {
       queryKey: getListSalesOrderShipmentsQueryKey(orderId),
     });
     queryClient.invalidateQueries({ queryKey: getListItemsQueryKey() });
+    queryClient.invalidateQueries({
+      queryKey: getListCustomerPaymentsQueryKey({ salesOrderId: orderId }),
+    });
   };
 
   const updateStatusMutation = useUpdateSalesOrderStatus({
@@ -846,6 +854,33 @@ export default function SalesOrderDetail() {
           </CardContent>
         </Card>
       </div>
+
+      {orderPayments && orderPayments.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+              Payment Breakdown
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {orderPayments.map((p) => (
+                <div key={p.id} className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium capitalize">
+                      {p.mode === "upi" ? "UPI" : p.mode === "cash" ? "Cash" : p.mode === "card" ? "Card" : p.mode === "bank" ? "Bank Transfer" : p.mode === "razorpay" ? "Razorpay" : (p.mode ?? "").charAt(0).toUpperCase() + (p.mode ?? "").slice(1)}
+                    </span>
+                    {p.referenceNumber && (
+                      <span className="text-muted-foreground text-xs">#{p.referenceNumber}</span>
+                    )}
+                  </div>
+                  <span className="font-medium">{formatCurrency(p.amount)}</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <PaymentLinkCard
         salesOrderId={order.id}

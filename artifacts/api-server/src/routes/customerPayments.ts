@@ -56,6 +56,25 @@ router.get("/customer-payments", async (req, res, next) => {
     if (req.query.to && typeof req.query.to === "string") {
       conds.push(lte(customerPaymentsTable.paymentDate, req.query.to));
     }
+    if (req.query.salesOrderId) {
+      const soId = Number(req.query.salesOrderId);
+      if (Number.isFinite(soId) && soId > 0) {
+        conds.push(
+          inArray(
+            customerPaymentsTable.id,
+            db
+              .select({ paymentId: customerPaymentAllocationsTable.paymentId })
+              .from(customerPaymentAllocationsTable)
+              .where(
+                and(
+                  eq(customerPaymentAllocationsTable.salesOrderId, soId),
+                  eq(customerPaymentAllocationsTable.organizationId, t.organizationId),
+                ),
+              ),
+          ),
+        );
+      }
+    }
     const rows = await db
       .select({
         payment: customerPaymentsTable,
