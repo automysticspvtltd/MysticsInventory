@@ -564,7 +564,21 @@ export default function Items() {
       { header: "Max Discount Percent", accessor: (r) => r.maxDiscountPercent ?? "" },
       { header: "Max Discount Amount", accessor: (r) => r.maxDiscountAmount ?? "" },
       { header: "Total Stock", accessor: (r) => r.totalStock },
-      { header: "Warehouse", accessor: () => "" },
+      {
+        header: "Warehouse",
+        accessor: (r) => {
+          const breakdown = (r.warehouseStock ?? []).filter(
+            (w) => w.quantity > 0,
+          );
+          if (breakdown.length === 0) return "";
+          const sorted = [...breakdown].sort(
+            (a, b) =>
+              b.quantity - a.quantity ||
+              a.warehouseName.localeCompare(b.warehouseName),
+          );
+          return sorted[0].warehouseName;
+        },
+      },
       { header: "Image URL", accessor: (r) => r.imageUrl ?? "" },
       {
         header: "Parent Item",
