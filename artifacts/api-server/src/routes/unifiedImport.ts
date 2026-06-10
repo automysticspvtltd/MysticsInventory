@@ -80,7 +80,7 @@ function pNum(
   return { ok: true, value: n };
 }
 
-const MAX_ROWS = 1000;
+const MAX_ROWS = 2000;
 const MAX_RETRIES = 3;
 
 router.post("/items/unified-bulk-import", async (req, res, next) => {

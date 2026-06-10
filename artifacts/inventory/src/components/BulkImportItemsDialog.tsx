@@ -205,7 +205,7 @@ const TEMPLATE_DATA = [
   ],
 ];
 
-const MAX_ROWS = 1000;
+const MAX_ROWS = 2000;
 
 function buildTemplateCsv(): string {
   return Papa.unparse(
