@@ -1375,6 +1375,80 @@ router.patch("/items/bulk-edit", async (req, res, next) => {
   }
 });
 
+router.patch("/items/bulk-move-warehouse", async (req, res, next) => {
+  try {
+    const t = req.tenant!;
+    const b = req.body ?? {};
+
+    const rawIds = Array.isArray(b.ids) ? b.ids : [];
+    if (rawIds.length === 0) {
+      res.status(400).json({ error: "ids must be a non-empty array" });
+      return;
+    }
+    if (rawIds.length > 500) {
+      res.status(400).json({ error: "Maximum 500 items per bulk move" });
+      return;
+    }
+    const ids: number[] = rawIds.map(Number);
+    if (!ids.every((n: number) => Number.isInteger(n) && n > 0)) {
+      res.status(400).json({ error: "All ids must be positive integers" });
+      return;
+    }
+
+    const newWarehouseId = Number(b.warehouseId);
+    if (!Number.isInteger(newWarehouseId) || newWarehouseId <= 0) {
+      res.status(400).json({ error: "warehouseId must be a positive integer" });
+      return;
+    }
+
+    const own = await assertOwnership({
+      organizationId: t.organizationId,
+      itemIds: ids,
+      warehouseIds: [newWarehouseId],
+    });
+    if (!own.ok) {
+      res.status(400).json({ error: `Invalid ${own.missing}` });
+      return;
+    }
+
+    await db.transaction(async (tx) => {
+      for (const itemId of ids) {
+        const rows = await tx
+          .select({ quantity: itemWarehouseStockTable.quantity })
+          .from(itemWarehouseStockTable)
+          .where(
+            and(
+              eq(itemWarehouseStockTable.organizationId, t.organizationId),
+              eq(itemWarehouseStockTable.itemId, itemId),
+            ),
+          );
+
+        const total = rows.reduce((sum, r) => sum + Number(r.quantity), 0);
+
+        await tx
+          .delete(itemWarehouseStockTable)
+          .where(
+            and(
+              eq(itemWarehouseStockTable.organizationId, t.organizationId),
+              eq(itemWarehouseStockTable.itemId, itemId),
+            ),
+          );
+
+        await tx.insert(itemWarehouseStockTable).values({
+          organizationId: t.organizationId,
+          itemId,
+          warehouseId: newWarehouseId,
+          quantity: toStr(total),
+        });
+      }
+    });
+
+    res.json({ moved: ids.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
 /**
  * Resolve a scanned/typed code to an item: barcode first (so a custom
  * barcode wins over a SKU collision), then sku. Used by the camera

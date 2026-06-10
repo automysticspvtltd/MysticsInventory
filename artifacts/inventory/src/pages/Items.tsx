@@ -94,7 +94,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useDebounce } from "@/hooks/use-debounce";
-import { Item, useGetMe } from "@/lib/queryKeys";
+import { Item, useGetMe, bulkMoveWarehouse } from "@/lib/queryKeys";
 import { normalizeRole } from "@/lib/permissions";
 import { ImageUploader } from "@/components/ImageUploader";
 import { useImageSrc } from "@/hooks/use-image-src";
@@ -436,6 +436,7 @@ export default function Items() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<number | null>(null);
   // The same scanner dialog is reused from two callsites: the search
   // bar (look up + navigate to the matched item) and the create/edit
   // form barcode field (write the scanned code into the form). Track
@@ -776,6 +777,11 @@ export default function Items() {
 
   const handleEdit = async (item: Item) => {
     setEditingItem(item);
+    const itemWh =
+      item.warehouseStock?.find((w) => w.quantity > 0)?.warehouseId ??
+      item.warehouseStock?.[0]?.warehouseId ??
+      null;
+    setSelectedWarehouseId(itemWh);
     // For bundles, fetch the detail so we can pre-fill the components
     // editor. For everything else the list row already has every field
     // we render in the form.
@@ -819,6 +825,8 @@ export default function Items() {
 
   const handleCreate = () => {
     setEditingItem(null);
+    const def = visibleWarehouses.find((w) => w.isDefault)?.id ?? visibleWarehouses[0]?.id ?? null;
+    setSelectedWarehouseId(def);
     form.reset({
       sku: "",
       name: "",
@@ -879,7 +887,7 @@ export default function Items() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusId, items]);
 
-  const onSubmit = (data: ItemFormValues) => {
+  const onSubmit = async (data: ItemFormValues) => {
     const axesList = (data.axes ?? "")
       .split(",")
       .map((a) => a.trim())
@@ -892,6 +900,26 @@ export default function Items() {
         }))
       : [];
     if (editingItem) {
+      const currentWh =
+        editingItem.warehouseStock?.find((w) => w.quantity > 0)?.warehouseId ??
+        editingItem.warehouseStock?.[0]?.warehouseId ??
+        null;
+      if (selectedWarehouseId && selectedWarehouseId !== currentWh) {
+        try {
+          await bulkMoveWarehouse({
+            ids: [editingItem.id],
+            warehouseId: selectedWarehouseId,
+          });
+        } catch (err) {
+          toast({
+            variant: "destructive",
+            title: "Failed to update warehouse",
+            description:
+              err instanceof Error ? err.message : "Unknown error",
+          });
+          return;
+        }
+      }
       const wantsVariants = !!data.hasVariants;
       const hadVariants = !!editingItem.hasVariants;
       const transitioningVariants = wantsVariants !== hadVariants;
@@ -950,6 +978,10 @@ export default function Items() {
           imageUrl: data.imageUrl?.trim() ? data.imageUrl.trim() : null,
           openingStock:
             data.hasVariants || data.isBundle ? 0 : data.openingStock || 0,
+          openingWarehouseId:
+            !data.hasVariants && !data.isBundle && selectedWarehouseId
+              ? selectedWarehouseId
+              : undefined,
           hasVariants: data.hasVariants,
           variantOptions,
           ...(data.isBundle
@@ -994,6 +1026,7 @@ export default function Items() {
         onOpenChange={setBulkEditOpen}
         selectedIds={Array.from(selectedIds)}
         categoryOptions={categoryOptions}
+        warehouses={visibleWarehouses}
         onSuccess={() => setSelectedIds(new Set())}
       />
       <BarcodeScannerDialog
@@ -1610,6 +1643,34 @@ export default function Items() {
                   </FormItem>
                 )}
               />
+
+              {!editingItem?.hasVariants && !editingItem?.parentItemId && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium leading-none">
+                    Warehouse
+                  </label>
+                  <Select
+                    value={selectedWarehouseId ? String(selectedWarehouseId) : ""}
+                    onValueChange={(v) => setSelectedWarehouseId(v ? Number(v) : null)}
+                  >
+                    <SelectTrigger data-testid="select-item-warehouse">
+                      <SelectValue placeholder="Select warehouse…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {visibleWarehouses.map((w) => (
+                        <SelectItemUI key={w.id} value={String(w.id)}>
+                          {w.name}
+                          {w.isDefault && (
+                            <span className="ml-1 text-xs text-muted-foreground">
+                              (default)
+                            </span>
+                          )}
+                        </SelectItemUI>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-4">
                 <FormField

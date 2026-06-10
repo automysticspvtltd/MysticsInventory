@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { Loader2 } from "lucide-react";
-import { bulkEditItems, getListItemsQueryKey } from "@/lib/queryKeys";
+import { bulkEditItems, getListItemsQueryKey, bulkMoveWarehouse } from "@/lib/queryKeys";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { CreatableCombobox } from "@/components/CreatableCombobox";
@@ -23,6 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import type { Warehouse } from "@/lib/queryKeys";
 
 interface BulkEditFormValues {
   category: string;
@@ -37,6 +38,7 @@ interface BulkEditItemsDialogProps {
   onOpenChange: (open: boolean) => void;
   selectedIds: number[];
   categoryOptions: string[];
+  warehouses: Warehouse[];
   onSuccess: () => void;
 }
 
@@ -45,11 +47,13 @@ export function BulkEditItemsDialog({
   onOpenChange,
   selectedIds,
   categoryOptions,
+  warehouses,
   onSuccess,
 }: BulkEditItemsDialogProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>("");
 
   const { register, handleSubmit, control, setError, reset, formState: { errors } } =
     useForm<BulkEditFormValues>({
@@ -101,6 +105,8 @@ export function BulkEditItemsDialog({
       payload.status = data.status;
       hasField = true;
     }
+    const warehouseId = selectedWarehouseId ? Number(selectedWarehouseId) : null;
+    if (warehouseId) hasField = true;
 
     if (!hasField) {
       toast({
@@ -113,17 +119,28 @@ export function BulkEditItemsDialog({
 
     setIsSubmitting(true);
     try {
-      const result = await bulkEditItems(
-        payload as unknown as Parameters<typeof bulkEditItems>[0],
-      );
+      const tasks: Promise<unknown>[] = [];
+
+      if (Object.keys(payload).length > 1) {
+        tasks.push(
+          bulkEditItems(payload as unknown as Parameters<typeof bulkEditItems>[0]),
+        );
+      }
+      if (warehouseId) {
+        tasks.push(bulkMoveWarehouse({ ids: selectedIds, warehouseId }));
+      }
+
+      await Promise.all(tasks);
+
       toast({
         title: "Items updated",
-        description: `${result.updated} item${result.updated === 1 ? "" : "s"} updated.`,
+        description: `${selectedIds.length} item${selectedIds.length === 1 ? "" : "s"} updated.`,
       });
       queryClient.invalidateQueries({ queryKey: getListItemsQueryKey() });
       onSuccess();
       onOpenChange(false);
       reset();
+      setSelectedWarehouseId("");
     } catch (err) {
       toast({
         title: "Update failed",
@@ -140,7 +157,10 @@ export function BulkEditItemsDialog({
     if (isSubmitting) return;
     onOpenChange(false);
     reset();
+    setSelectedWarehouseId("");
   }
+
+  const visibleWarehouses = (warehouses ?? []).filter((w) => !w.isVirtual);
 
   return (
     <Dialog
@@ -159,6 +179,28 @@ export function BulkEditItemsDialog({
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>Warehouse</Label>
+            <Select
+              value={selectedWarehouseId || "__keep__"}
+              onValueChange={(v) =>
+                setSelectedWarehouseId(v === "__keep__" ? "" : v)
+              }
+            >
+              <SelectTrigger data-testid="bulk-edit-warehouse">
+                <SelectValue placeholder="Keep existing" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__keep__">Keep existing</SelectItem>
+                {visibleWarehouses.map((w) => (
+                  <SelectItem key={w.id} value={String(w.id)}>
+                    {w.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           <div className="space-y-1.5">
             <Label>Category</Label>
             <Controller
