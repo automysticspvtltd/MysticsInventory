@@ -405,7 +405,7 @@ export default function Items() {
   // pulled from existing items so each org sees its own list, and the
   // unit list seeds the common UoMs plus any custom unit already in
   // use so existing data stays selectable.
-  const { data: allItemsForOptions } = useListItems({});
+  const { data: allItemsForOptions } = useListItems({ includeWarehouseBreakdown: true });
   const categoryOptions = useMemo(() => {
     const set = new Set<string>();
     for (const i of allItemsForOptions ?? []) {
