@@ -3,14 +3,15 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { queryClient } from "@/lib/queryClient";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { AppShell } from "@/components/AppShell";
 import { RouteFallback } from "@/components/RouteFallback";
 import { ThemeProvider } from "@/lib/theme";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { initActiveOrgFromStorage } from "@/lib/orgContext";
 import { canAccessPath, normalizeRole } from "@/lib/permissions";
-import { useGetMe } from "@/lib/queryKeys";
+import { useGetMe, useGetCurrentOrganization } from "@/lib/queryKeys";
+import { useImageSrc } from "@/hooks/use-image-src";
 
 initActiveOrgFromStorage();
 
@@ -82,6 +83,30 @@ const NotFound = lazy(() => import("@/pages/not-found"));
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
+function OrgMeta() {
+  const { data: org } = useGetCurrentOrganization();
+  const orgAny = org as (typeof org & { sidebarLogoUrl?: string | null }) | undefined;
+  const { src: logoSrc } = useImageSrc(orgAny?.sidebarLogoUrl ?? org?.logoUrl);
+
+  useEffect(() => {
+    if (org?.name) document.title = org.name;
+  }, [org?.name]);
+
+  useEffect(() => {
+    if (!logoSrc) return;
+    let link = document.querySelector<HTMLLinkElement>("link[rel~='icon']");
+    if (!link) {
+      link = document.createElement("link");
+      link.rel = "icon";
+      document.head.appendChild(link);
+    }
+    link.href = logoSrc;
+    link.type = logoSrc.match(/\.svg(\?|$)/i) ? "image/svg+xml" : "image/png";
+  }, [logoSrc]);
+
+  return null;
+}
+
 function HomeRedirect() {
   const { user, isLoading } = useAuth();
   if (isLoading) return <RouteFallback />;
@@ -104,6 +129,8 @@ function RoleGate({ children }: { children: React.ReactNode }) {
 
 function ProtectedRoutes() {
   return (
+    <>
+    <OrgMeta />
     <AppShell>
       <Suspense fallback={<RouteFallback />}>
        <RoleGate>
@@ -173,6 +200,7 @@ function ProtectedRoutes() {
        </RoleGate>
       </Suspense>
     </AppShell>
+    </>
   );
 }
 
