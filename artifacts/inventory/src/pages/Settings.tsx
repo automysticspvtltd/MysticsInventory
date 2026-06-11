@@ -349,6 +349,8 @@ export default function Settings() {
 
       <BarcodeSettingsCard />
 
+      <PosBillNumberCard />
+
       <PosOrderDiscountCard />
 
       <SalesChannelWarehouseCard />
@@ -533,6 +535,117 @@ function PosOrderDiscountCard() {
             data-testid="btn-save-pos-discount-limits"
           >
             {mutation.isPending ? "Saving…" : "Save discount limits"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PosBillNumberCard() {
+  const { data: org } = useGetCurrentOrganization();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const orgAny = org as (typeof org & {
+    posBillPrefix?: string | null;
+    posBillNextNumber?: number | null;
+  }) | undefined;
+
+  const [prefix, setPrefix] = useState("");
+  const [nextNum, setNextNum] = useState("1");
+
+  useEffect(() => {
+    if (orgAny) {
+      setPrefix(orgAny.posBillPrefix ?? "");
+      setNextNum(String(orgAny.posBillNextNumber ?? 1));
+    }
+  }, [org]);
+
+  const mutation = useUpdateCurrentOrganization({
+    mutation: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getGetCurrentOrganizationQueryKey() });
+        toast({ title: "POS bill number settings saved" });
+      },
+      onError: () => {
+        toast({ title: "Could not save POS bill number settings", variant: "destructive" });
+      },
+    },
+  });
+
+  if (!org) return null;
+
+  const cleanedPrefix = prefix.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10);
+  const effectivePrefix = cleanedPrefix || "BILL";
+  const nextNumVal = Math.max(1, Math.floor(Number(nextNum) || 1));
+  const previewNum = String(nextNumVal).padStart(4, "0");
+  const previewBill = `${effectivePrefix}-${previewNum}`;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ShoppingCart className="h-5 w-5 text-primary" />
+          POS Bill Number
+        </CardTitle>
+        <CardDescription>
+          Configure the prefix and starting number printed on POS thermal receipts.
+          Each sale auto-increments the counter.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <label className="text-sm font-medium" htmlFor="pos-bill-prefix">
+              Bill Prefix
+            </label>
+            <Input
+              id="pos-bill-prefix"
+              value={prefix}
+              maxLength={10}
+              placeholder="BILL"
+              onChange={(e) => setPrefix(e.target.value)}
+              data-testid="input-pos-bill-prefix"
+            />
+            <p className="text-xs text-muted-foreground">
+              Letters/digits only. Stored as{" "}
+              <span className="font-mono">{effectivePrefix}</span>.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium" htmlFor="pos-bill-next">
+              Next Bill Number
+            </label>
+            <Input
+              id="pos-bill-next"
+              type="number"
+              min={1}
+              step={1}
+              value={nextNum}
+              onChange={(e) => setNextNum(e.target.value)}
+              data-testid="input-pos-bill-next-number"
+            />
+            <p className="text-xs text-muted-foreground">
+              Next bill will be{" "}
+              <span className="font-mono font-semibold">{previewBill}</span>.
+            </p>
+          </div>
+        </div>
+        <div className="flex justify-end">
+          <Button
+            onClick={() =>
+              mutation.mutate({
+                data: {
+                  posBillPrefix: cleanedPrefix || null,
+                  posBillNextNumber: nextNumVal,
+                } as Parameters<typeof mutation.mutate>[0]["data"],
+              })
+            }
+            disabled={mutation.isPending}
+            data-testid="btn-save-pos-bill-settings"
+          >
+            {mutation.isPending ? "Saving…" : "Save bill number settings"}
           </Button>
         </div>
       </CardContent>

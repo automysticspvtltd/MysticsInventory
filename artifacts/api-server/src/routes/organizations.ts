@@ -87,6 +87,24 @@ router.patch("/organizations/current", async (req, res, next) => {
     ]) {
       if (k in body) updates[k] = body[k];
     }
+    if ("posBillPrefix" in body) {
+      const raw = body.posBillPrefix;
+      if (raw == null || raw === "") {
+        updates.posBillPrefix = null;
+      } else {
+        const cleaned = String(raw)
+          .toUpperCase()
+          .replace(/[^A-Z0-9]/g, "")
+          .slice(0, 10);
+        updates.posBillPrefix = cleaned || null;
+      }
+    }
+    if ("posBillNextNumber" in body) {
+      const n = Number(body.posBillNextNumber);
+      if (Number.isInteger(n) && n >= 1) {
+        updates.posBillNextNumber = n;
+      }
+    }
     // Tenant-isolation guard for uploaded logos: any /objects/... path that the
     // admin sets here must either be unowned (a fresh upload) or already owned
     // by this org. Pointing logoUrl at another tenant's object is rejected.

@@ -1,4 +1,4 @@
-import { boolean, numeric, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, integer, numeric, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const organizationsTable = pgTable(
   "organizations",
@@ -102,6 +102,8 @@ export const organizationsTable = pgTable(
     // in later without another migration.
     barcodePrefix: text("barcode_prefix"),
     barcodeFormat: text("barcode_format").notNull().default("code128"),
+    posBillPrefix: text("pos_bill_prefix"),
+    posBillNextNumber: integer("pos_bill_next_number").notNull().default(1),
     maxOrderDiscountPercent: numeric("max_order_discount_percent", { precision: 5, scale: 2 }),
     maxOrderDiscountAmount: numeric("max_order_discount_amount", { precision: 12, scale: 2 }),
     onboardingCompletedAt: timestamp("onboarding_completed_at", { withTimezone: true }),

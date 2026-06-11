@@ -55,6 +55,10 @@ export function serializeOrganization(o: Organization) {
     barcodeFormat:
       (o as unknown as { barcodeFormat?: string | null }).barcodeFormat ??
       "code128",
+    posBillPrefix:
+      (o as unknown as { posBillPrefix?: string | null }).posBillPrefix ?? null,
+    posBillNextNumber:
+      (o as unknown as { posBillNextNumber?: number | null }).posBillNextNumber ?? 1,
     maxOrderDiscountPercent:
       (o as unknown as { maxOrderDiscountPercent?: string | null }).maxOrderDiscountPercent != null
         ? Number((o as unknown as { maxOrderDiscountPercent: string }).maxOrderDiscountPercent)

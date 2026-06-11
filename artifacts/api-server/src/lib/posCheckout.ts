@@ -14,6 +14,7 @@ import {
   customerPaymentsTable,
   customerPaymentAllocationsTable,
   salesChannelWarehouseDefaultsTable,
+  organizationsTable,
 } from "@workspace/db";
 import { computeOrderTotals, nextOrderNumber } from "./orderHelpers";
 import { toNum, toStr } from "./numeric";
@@ -524,7 +525,25 @@ export async function executePosCheckout(
     // Insert the sales order in `invoiced` status — POS sales are
     // born final. amountPaid + balanceDue are updated below after we
     // know how much of the captured payment to allocate.
-    const orderNumber = nextOrderNumber("POS");
+    //
+    // Atomically claim the next sequential bill number for this org.
+    // The UPDATE takes a row-lock so concurrent POS sales on the same
+    // org each get a unique number without a separate sequence.
+    const [orgBillRow] = await tx
+      .update(organizationsTable)
+      .set({
+        posBillNextNumber: sql`${organizationsTable.posBillNextNumber} + 1`,
+      })
+      .where(eq(organizationsTable.id, organizationId)) // org-scope-allow: POS bill counter — non-tenant-data query on own org row
+      .returning({
+        prefix: organizationsTable.posBillPrefix,
+        nextNumber: organizationsTable.posBillNextNumber,
+      });
+    const billNum = (orgBillRow?.nextNumber ?? 2) - 1;
+    const billPrefix =
+      orgBillRow?.prefix?.trim().toUpperCase().replace(/[^A-Z0-9]/g, "") ||
+      "BILL";
+    const orderNumber = `${billPrefix}-${String(billNum).padStart(4, "0")}`;
     const today = new Date().toISOString().slice(0, 10);
     // Apply order-level discount on top of line totals.
     const lineTotal = toNum(totals.total);
