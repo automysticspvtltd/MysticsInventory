@@ -91,12 +91,13 @@ ok "DB schema up to date"
 
 # ── 7. Restart PM2 ───────────────────────────────────────────────────────────
 info "Step 7/7 — Restart PM2 app: $PM2_APP"
-if pm2 restart "$PM2_APP"; then
-  ok "PM2 app '$PM2_APP' restarted"
+if pm2 describe "$PM2_APP" &>/dev/null; then
+  pm2 restart "$PM2_APP" || pm2 reload "$PM2_APP" || fail "Could not restart '$PM2_APP'. Check: pm2 list"
 else
-  warn "pm2 restart failed — trying pm2 reload..."
-  pm2 reload "$PM2_APP" || fail "Could not restart '$PM2_APP'. Check: pm2 list"
+  warn "App '$PM2_APP' not found — starting from ecosystem.config.cjs"
+  pm2 start ecosystem.config.cjs || fail "Could not start from ecosystem.config.cjs"
 fi
+pm2 save
 
 echo ""
 echo -e "${GREEN}════════════════════════════════════════${NC}"
