@@ -87,6 +87,27 @@ router.get("/sales-orders", async (req, res, next) => {
           FROM sales_order_lines sol
           WHERE sol.sales_order_id = ${salesOrdersTable.id}
         )`,
+        cashPaid: sql<string>`(
+          SELECT COALESCE(SUM(cpa.amount), 0)
+          FROM customer_payment_allocations cpa
+          JOIN customer_payments cp ON cp.id = cpa.payment_id
+          WHERE cpa.sales_order_id = ${salesOrdersTable.id}
+          AND cp.mode = 'cash'
+        )`,
+        upiPaid: sql<string>`(
+          SELECT COALESCE(SUM(cpa.amount), 0)
+          FROM customer_payment_allocations cpa
+          JOIN customer_payments cp ON cp.id = cpa.payment_id
+          WHERE cpa.sales_order_id = ${salesOrdersTable.id}
+          AND cp.mode = 'upi'
+        )`,
+        cardPaid: sql<string>`(
+          SELECT COALESCE(SUM(cpa.amount), 0)
+          FROM customer_payment_allocations cpa
+          JOIN customer_payments cp ON cp.id = cpa.payment_id
+          WHERE cpa.sales_order_id = ${salesOrdersTable.id}
+          AND cp.mode = 'card'
+        )`,
       })
       .from(salesOrdersTable)
       .innerJoin(customersTable, eq(customersTable.id, salesOrdersTable.customerId))
@@ -97,15 +118,18 @@ router.get("/sales-orders", async (req, res, next) => {
       .where(and(...conds))
       .orderBy(desc(salesOrdersTable.createdAt));
     res.json(
-      rows.map((r) =>
-        serializeSalesOrder(
+      rows.map((r) => ({
+        ...serializeSalesOrder(
           r.order,
           r.customerName,
           r.warehouseName,
           r.customerGstNumber,
           r.discountTotal,
         ),
-      ),
+        cashPaid: Number(r.cashPaid),
+        upiPaid: Number(r.upiPaid),
+        cardPaid: Number(r.cardPaid),
+      })),
     );
   } catch (err) {
     next(err);

@@ -316,9 +316,10 @@ export default function SalesOrders() {
               <TableHead>Customer</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Discount</TableHead>
+              <TableHead className="text-right">Cash</TableHead>
+              <TableHead className="text-right">UPI</TableHead>
+              <TableHead className="text-right">Card</TableHead>
               <TableHead className="text-right">Total</TableHead>
-              <TableHead className="text-right">Paid</TableHead>
-              <TableHead className="text-right">Balance</TableHead>
               <TableHead className="w-[140px]"></TableHead>
             </TableRow>
           </TableHeader>
@@ -326,7 +327,7 @@ export default function SalesOrders() {
             {isLoading ? (
               <TableRow>
                 <TableCell
-                  colSpan={showSelection ? 10 : 9}
+                  colSpan={showSelection ? 11 : 10}
                   className="h-24 text-center"
                 >
                   Loading...
@@ -335,19 +336,23 @@ export default function SalesOrders() {
             ) : (orders?.length ?? 0) === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={showSelection ? 10 : 9}
+                  colSpan={showSelection ? 11 : 10}
                   className="h-24 text-center"
                 >
                   No orders found.
                 </TableCell>
               </TableRow>
             ) : (
-              (orders ?? []).slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE).map((order) => {
+              <>
+              {(orders ?? []).slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE).map((order) => {
                 const balance = Number(order.balanceDue ?? 0);
-                const paid = Number(order.amountPaid ?? 0);
                 const canPay =
                   PAYABLE_STATUSES.has(order.status) && balance > 0;
                 const eligible = isEinvoiceEligible(order);
+                const orderAny = order as unknown as Record<string, number>;
+                const cash = orderAny.cashPaid ?? 0;
+                const upi = orderAny.upiPaid ?? 0;
+                const card = orderAny.cardPaid ?? 0;
                 return (
                   <TableRow key={order.id} data-testid={`row-so-${order.id}`}>
                     {showSelection && (
@@ -512,22 +517,17 @@ export default function SalesOrders() {
                         <span className="text-muted-foreground">—</span>
                       )}
                     </TableCell>
+                    <TableCell className="text-right">
+                      {cash > 0 ? formatCurrency(cash) : <span className="text-muted-foreground">—</span>}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {upi > 0 ? formatCurrency(upi) : <span className="text-muted-foreground">—</span>}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {card > 0 ? formatCurrency(card) : <span className="text-muted-foreground">—</span>}
+                    </TableCell>
                     <TableCell className="text-right font-medium">
                       {formatCurrency(order.total)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {formatCurrency(paid)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <span
-                        className={
-                          balance > 0
-                            ? "text-orange-600 font-medium"
-                            : "text-muted-foreground"
-                        }
-                      >
-                        {formatCurrency(balance)}
-                      </span>
                     </TableCell>
                     <TableCell className="text-right">
                       {canPay && (
@@ -550,7 +550,32 @@ export default function SalesOrders() {
                     </TableCell>
                   </TableRow>
                 );
-              })
+              })}
+              {(() => {
+                const all = orders ?? [];
+                const totalDisc = all.reduce((s, o) => s + Number(o.discountTotal ?? 0), 0);
+                const totalCash = all.reduce((s, o) => s + ((o as unknown as Record<string, number>).cashPaid ?? 0), 0);
+                const totalUpi = all.reduce((s, o) => s + ((o as unknown as Record<string, number>).upiPaid ?? 0), 0);
+                const totalCard = all.reduce((s, o) => s + ((o as unknown as Record<string, number>).cardPaid ?? 0), 0);
+                const totalAmt = all.reduce((s, o) => s + Number(o.total ?? 0), 0);
+                const colsBefore = showSelection ? 5 : 4;
+                return (
+                  <TableRow className="border-t-2 font-semibold bg-muted/40">
+                    <TableCell colSpan={colsBefore} className="text-muted-foreground text-sm">
+                      Sub Total ({all.length} order{all.length !== 1 ? "s" : ""})
+                    </TableCell>
+                    <TableCell className="text-right text-green-600 dark:text-green-400">
+                      {totalDisc > 0 ? `-${formatCurrency(totalDisc)}` : "—"}
+                    </TableCell>
+                    <TableCell className="text-right">{totalCash > 0 ? formatCurrency(totalCash) : "—"}</TableCell>
+                    <TableCell className="text-right">{totalUpi > 0 ? formatCurrency(totalUpi) : "—"}</TableCell>
+                    <TableCell className="text-right">{totalCard > 0 ? formatCurrency(totalCard) : "—"}</TableCell>
+                    <TableCell className="text-right">{formatCurrency(totalAmt)}</TableCell>
+                    <TableCell />
+                  </TableRow>
+                );
+              })()}
+              </>
             )}
           </TableBody>
         </Table>
