@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, desc, eq, gte, inArray, like, lte, not, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import {
   db,
   salesOrdersTable,
@@ -66,15 +66,14 @@ router.get("/sales-orders", async (req, res, next) => {
     if (req.query.to) {
       conds.push(lte(salesOrdersTable.orderDate, String(req.query.to)));
     }
-    // POS counter sales are stamped with order numbers prefixed
-    // `POS-…` (see `nextOrderNumber("POS")` in `lib/posCheckout.ts`),
-    // regular sales orders with `SO-…`. We use that prefix as the
-    // canonical POS marker — it survives notes edits and doesn't
-    // require a schema migration.
+    // POS counter sales always have `stockAppliedAt` set (posCheckout
+    // writes it on creation). This is the durable POS marker — it
+    // survives order-number prefix changes (e.g. custom bill prefixes)
+    // and notes edits without a schema migration.
     if (req.query.orderType === "pos") {
-      conds.push(like(salesOrdersTable.orderNumber, "POS-%"));
+      conds.push(isNotNull(salesOrdersTable.stockAppliedAt));
     } else if (req.query.orderType === "sales_order") {
-      conds.push(not(like(salesOrdersTable.orderNumber, "POS-%")));
+      conds.push(isNull(salesOrdersTable.stockAppliedAt));
     }
     const rows = await db
       .select({
@@ -144,6 +143,27 @@ async function loadDetail(orgId: number, orderId: number) {
       customerPhone: customersTable.phone,
       customerGstNumber: customersTable.gstNumber,
       warehouseName: warehousesTable.name,
+      cashPaid: sql<string>`(
+        SELECT COALESCE(SUM(cpa.amount), 0)
+        FROM customer_payment_allocations cpa
+        JOIN customer_payments cp ON cp.id = cpa.payment_id
+        WHERE cpa.sales_order_id = ${salesOrdersTable.id}
+        AND cp.mode = 'cash'
+      )`,
+      upiPaid: sql<string>`(
+        SELECT COALESCE(SUM(cpa.amount), 0)
+        FROM customer_payment_allocations cpa
+        JOIN customer_payments cp ON cp.id = cpa.payment_id
+        WHERE cpa.sales_order_id = ${salesOrdersTable.id}
+        AND cp.mode = 'upi'
+      )`,
+      cardPaid: sql<string>`(
+        SELECT COALESCE(SUM(cpa.amount), 0)
+        FROM customer_payment_allocations cpa
+        JOIN customer_payments cp ON cp.id = cpa.payment_id
+        WHERE cpa.sales_order_id = ${salesOrdersTable.id}
+        AND cp.mode = 'card'
+      )`,
     })
     .from(salesOrdersTable)
     .innerJoin(customersTable, eq(customersTable.id, salesOrdersTable.customerId))
@@ -170,13 +190,18 @@ async function loadDetail(orgId: number, orderId: number) {
     0,
   );
   return {
-    order: serializeSalesOrder(
-      orderRows[0].order,
-      orderRows[0].customerName,
-      orderRows[0].warehouseName,
-      orderRows[0].customerGstNumber,
-      discountTotal,
-    ),
+    order: {
+      ...serializeSalesOrder(
+        orderRows[0].order,
+        orderRows[0].customerName,
+        orderRows[0].warehouseName,
+        orderRows[0].customerGstNumber,
+        discountTotal,
+      ),
+      cashPaid: Number(orderRows[0].cashPaid),
+      upiPaid: Number(orderRows[0].upiPaid),
+      cardPaid: Number(orderRows[0].cardPaid),
+    },
     customerPhone: (() => {
       if (orderRows[0].customerPhone) return orderRows[0].customerPhone;
       const notes = orderRows[0].order.notes ?? "";
