@@ -9,10 +9,11 @@
 # What it does (in order):
 #   1. git pull (latest code)
 #   2. pnpm install (sync dependencies)
-#   3. Build API server  (esbuild → artifacts/api-server/dist/)
-#   4. Build frontend    (vite   → artifacts/inventory/dist/public/)
-#   5. Apply DB schema   (drizzle-kit push --force — safe, idempotent)
-#   6. Restart PM2 app
+#   3. Compile shared libs  (tsc --build → lib/db, lib/api-zod, lib/api-client-react dist/)
+#   4. Build API server  (esbuild → artifacts/api-server/dist/)
+#   5. Build frontend    (vite   → artifacts/inventory/dist/public/)
+#   6. Apply DB schema   (drizzle-kit push --force — safe, idempotent)
+#   7. Restart PM2 app
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -59,32 +60,37 @@ echo -e "${CYAN}═════════════════════�
 echo ""
 
 # ── 1. Pull latest code ───────────────────────────────────────────────────────
-info "Step 1/6 — git pull"
+info "Step 1/7 — git pull"
 git pull --ff-only || fail "git pull failed. Resolve conflicts manually."
 ok "Code updated"
 
 # ── 2. Install dependencies ───────────────────────────────────────────────────
-info "Step 2/6 — pnpm install"
+info "Step 2/7 — pnpm install"
 pnpm install --frozen-lockfile
 ok "Dependencies synced"
 
-# ── 3. Build API server ───────────────────────────────────────────────────────
-info "Step 3/6 — Build API server"
+# ── 3. Compile shared libs ────────────────────────────────────────────────────
+info "Step 3/7 — Compile shared libs (tsc --build)"
+pnpm run typecheck:libs
+ok "Libs compiled → lib/db, lib/api-zod, lib/api-client-react dist/"
+
+# ── 4. Build API server ───────────────────────────────────────────────────────
+info "Step 4/7 — Build API server"
 pnpm --filter @workspace/api-server run build
 ok "API server built → artifacts/api-server/dist/"
 
-# ── 4. Build frontend ─────────────────────────────────────────────────────────
-info "Step 4/6 — Build frontend"
+# ── 5. Build frontend ─────────────────────────────────────────────────────────
+info "Step 5/7 — Build frontend"
 pnpm --filter @workspace/inventory run build
 ok "Frontend built → artifacts/inventory/dist/public/"
 
-# ── 5. Apply DB schema changes ────────────────────────────────────────────────
-info "Step 5/6 — Apply DB schema (drizzle-kit push)"
+# ── 6. Apply DB schema changes ────────────────────────────────────────────────
+info "Step 6/7 — Apply DB schema (drizzle-kit push)"
 pnpm --filter @workspace/db run push-force
 ok "DB schema up to date"
 
-# ── 6. Restart PM2 ───────────────────────────────────────────────────────────
-info "Step 6/6 — Restart PM2 app: $PM2_APP"
+# ── 7. Restart PM2 ───────────────────────────────────────────────────────────
+info "Step 7/7 — Restart PM2 app: $PM2_APP"
 if pm2 restart "$PM2_APP"; then
   ok "PM2 app '$PM2_APP' restarted"
 else
