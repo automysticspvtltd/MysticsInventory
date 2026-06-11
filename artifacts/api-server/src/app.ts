@@ -2,6 +2,8 @@ import express, { type Express, type NextFunction, type Request, type Response }
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
+import path from "path";
+import { existsSync } from "fs";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { buildSessionMiddleware } from "./lib/sessions";
@@ -46,6 +48,27 @@ app.use(
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
+
+// Serve the built frontend SPA when the dist folder exists (production).
+// In development Vite runs on its own port; the dist folder won't exist.
+const FRONTEND_DIST = path.resolve(
+  // import.meta.dirname is the compiled dist/ folder in production
+  // (artifacts/api-server/dist/). Two levels up → artifacts/inventory/dist/public.
+  typeof import.meta.dirname !== "undefined"
+    ? import.meta.dirname
+    : path.dirname(new URL(import.meta.url).pathname),
+  "../../inventory/dist/public",
+);
+if (existsSync(path.join(FRONTEND_DIST, "index.html"))) {
+  app.use(express.static(FRONTEND_DIST, { index: false }));
+  // SPA fallback: any route that isn't /api/* gets index.html so
+  // client-side routing (wouter) handles it.
+  app.use("/{*path}", (_req: Request, res: Response, next: NextFunction) => {
+    res.sendFile(path.join(FRONTEND_DIST, "index.html"), (err) => {
+      if (err) next(err);
+    });
+  });
+}
 
 // JSON error handler for the API.
 app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {

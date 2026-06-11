@@ -1417,7 +1417,7 @@ function SalesOrderThermalReceipt({
           font-weight: 700; font-size: 11pt; margin-top: 1mm;
         }
       `}</style>
-      <div id="_so_thermal_">
+      <div id="_so_thermal_" style={{ display: "none" }}>
         {logoSrc && (
           <div className="center">
             <img src={logoSrc} alt="" className="logo" />
