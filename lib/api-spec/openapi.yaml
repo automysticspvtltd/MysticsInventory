@@ -3848,6 +3848,9 @@ components:
           description: "Order-level discount applied on top of line discounts (e.g. from POS checkout). Computed as max(0, subtotal + taxTotal - total). Zero for regular orders."
         amountPaid: { type: number }
         balanceDue: { type: number }
+        cashPaid: { type: number }
+        upiPaid: { type: number }
+        cardPaid: { type: number }
         notes: { type: ["string", "null"] }
         orderType:
           type: string
@@ -3874,7 +3877,7 @@ components:
             - { $ref: "#/components/schemas/EinvoiceDetails" }
             - { type: "null" }
         createdAt: { type: string }
-      required: [id, orderNumber, customerId, customerName, walkinName, customerGstNumber, warehouseId, warehouseName, status, orderDate, expectedShipDate, subtotal, taxTotal, total, discountTotal, orderDiscountAmount, amountPaid, balanceDue, notes, orderType, saleChannel, paymentStatus, shopifyOrderId, ewb, einvoice, createdAt]
+      required: [id, orderNumber, customerId, customerName, walkinName, customerGstNumber, warehouseId, warehouseName, status, orderDate, expectedShipDate, subtotal, taxTotal, total, discountTotal, orderDiscountAmount, amountPaid, balanceDue, cashPaid, upiPaid, cardPaid, notes, orderType, saleChannel, paymentStatus, shopifyOrderId, ewb, einvoice, createdAt]
 
     SalesOrderDetail:
       type: object

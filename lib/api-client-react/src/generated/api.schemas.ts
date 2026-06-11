@@ -990,6 +990,9 @@ export interface SalesOrder {
   orderDiscountAmount: number;
   amountPaid: number;
   balanceDue: number;
+  cashPaid: number;
+  upiPaid: number;
+  cardPaid: number;
   /** @nullable */
   notes: string | null;
   /** Derived from the order number prefix — POS counter sales vs regular sales orders. */

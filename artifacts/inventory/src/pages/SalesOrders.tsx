@@ -290,7 +290,7 @@ export default function SalesOrders() {
         )}
       </div>
 
-      <div className="rounded-md border bg-card">
+      <div className="rounded-md border bg-card overflow-y-auto max-h-[72vh]">
         <Table>
           <TableHeader>
             <TableRow>
@@ -349,10 +349,9 @@ export default function SalesOrders() {
                 const canPay =
                   PAYABLE_STATUSES.has(order.status) && balance > 0;
                 const eligible = isEinvoiceEligible(order);
-                const orderAny = order as unknown as Record<string, number>;
-                const cash = orderAny.cashPaid ?? 0;
-                const upi = orderAny.upiPaid ?? 0;
-                const card = orderAny.cardPaid ?? 0;
+                const cash = order.cashPaid ?? 0;
+                const upi = order.upiPaid ?? 0;
+                const card = order.cardPaid ?? 0;
                 return (
                   <TableRow key={order.id} data-testid={`row-so-${order.id}`}>
                     {showSelection && (
@@ -554,13 +553,13 @@ export default function SalesOrders() {
               {(() => {
                 const all = orders ?? [];
                 const totalDisc = all.reduce((s, o) => s + Number(o.discountTotal ?? 0), 0);
-                const totalCash = all.reduce((s, o) => s + ((o as unknown as Record<string, number>).cashPaid ?? 0), 0);
-                const totalUpi = all.reduce((s, o) => s + ((o as unknown as Record<string, number>).upiPaid ?? 0), 0);
-                const totalCard = all.reduce((s, o) => s + ((o as unknown as Record<string, number>).cardPaid ?? 0), 0);
+                const totalCash = all.reduce((s, o) => s + (o.cashPaid ?? 0), 0);
+                const totalUpi = all.reduce((s, o) => s + (o.upiPaid ?? 0), 0);
+                const totalCard = all.reduce((s, o) => s + (o.cardPaid ?? 0), 0);
                 const totalAmt = all.reduce((s, o) => s + Number(o.total ?? 0), 0);
                 const colsBefore = showSelection ? 5 : 4;
                 return (
-                  <TableRow className="border-t-2 font-semibold bg-muted/40">
+                  <TableRow className="sticky bottom-0 z-10 border-t-2 font-semibold bg-card shadow-[0_-1px_0_0_hsl(var(--border))]">
                     <TableCell colSpan={colsBefore} className="text-muted-foreground text-sm">
                       Sub Total ({all.length} order{all.length !== 1 ? "s" : ""})
                     </TableCell>
