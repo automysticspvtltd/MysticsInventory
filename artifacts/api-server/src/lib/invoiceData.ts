@@ -6,6 +6,8 @@ import {
   customersTable,
   organizationsTable,
   itemsTable,
+  customerPaymentsTable,
+  customerPaymentAllocationsTable,
 } from "@workspace/db";
 import {
   renderInvoicePdf,
@@ -15,6 +17,7 @@ import {
 } from "./invoicePdf";
 import { buildEwbQrPayload } from "./ewb";
 import { fetchLogoBuffer } from "./orgLogo";
+import { toNum } from "./numeric";
 
 const ORDER_INVOICEABLE_STATUSES = new Set([
   "shipped",
@@ -32,6 +35,20 @@ export interface LoadedInvoice {
   customerName: string;
   status: string;
   total: number;
+}
+
+function parseWalkinInfo(notes: string | null): { name: string | null; phone: string | null } {
+  if (!notes) return { name: null, phone: null };
+  const walkInLine = notes.split("\n").find((l) => l.startsWith("Walk-in:"));
+  if (!walkInLine) return { name: null, phone: null };
+  const content = walkInLine.replace(/^Walk-in:\s*/, "").trim();
+  const withPhone = content.match(/^(.+?)\s*\((\d{5,15})\)$/);
+  if (withPhone) {
+    const extractedName = withPhone[1].trim();
+    return { name: extractedName || null, phone: withPhone[2] };
+  }
+  if (/^\d{5,15}$/.test(content)) return { name: null, phone: content };
+  return { name: content || null, phone: null };
 }
 
 export async function loadInvoiceForOrder(
@@ -54,7 +71,7 @@ export async function loadInvoiceForOrder(
     return { wrongStatus: order.status };
   }
 
-  const [orgRows, customerRows, lineRows] = await Promise.all([
+  const [orgRows, customerRows, lineRows, paymentRows] = await Promise.all([
     db
       .select()
       .from(organizationsTable)
@@ -81,11 +98,34 @@ export async function loadInvoiceForOrder(
       .innerJoin(itemsTable, eq(itemsTable.id, salesOrderLinesTable.itemId))
       .where(eq(salesOrderLinesTable.salesOrderId, salesOrderId))
       .orderBy(asc(salesOrderLinesTable.id)),
+    db
+      .select({
+        mode: customerPaymentsTable.mode,
+        amount: customerPaymentsTable.amount,
+      })
+      .from(customerPaymentAllocationsTable)
+      .innerJoin(
+        customerPaymentsTable,
+        eq(customerPaymentsTable.id, customerPaymentAllocationsTable.paymentId),
+      )
+      .where(
+        and(
+          eq(customerPaymentAllocationsTable.salesOrderId, salesOrderId),
+          eq(customerPaymentAllocationsTable.organizationId, organizationId),
+        ),
+      ),
   ]);
 
   const org = orgRows[0];
   const customer = customerRows[0];
   if (!org || !customer) return { notFound: true };
+
+  const walkin = parseWalkinInfo(order.notes);
+  const effectiveCustomer = {
+    ...customer,
+    name: walkin.name ?? customer.name,
+    phone: walkin.phone ?? customer.phone,
+  };
 
   const lines: InvoicePdfLine[] = lineRows.map((r) => ({
     itemName: r.itemName,
@@ -95,9 +135,20 @@ export async function loadInvoiceForOrder(
     quantity: r.line.quantity,
     unitPrice: r.line.unitPrice,
     taxRate: r.line.taxRate,
+    discountAmount: r.line.discountAmount,
     lineSubtotal: r.line.lineSubtotal,
     lineTax: r.line.lineTax,
     lineTotal: r.line.lineTotal,
+  }));
+
+  const orderDiscount = Math.max(
+    0,
+    toNum(order.subtotal) + toNum(order.taxTotal) - toNum(order.total),
+  );
+
+  const paymentModes = paymentRows.map((p) => ({
+    mode: p.mode ?? "other",
+    amount: toNum(p.amount),
   }));
 
   const logoBuffer = await fetchLogoBuffer(org.logoUrl, organizationId);
@@ -139,14 +190,14 @@ export async function loadInvoiceForOrder(
       invoiceFooter: org.invoiceFooter,
     },
     customer: {
-      name: customer.name,
-      email: customer.email,
-      phone: customer.phone,
-      company: customer.company,
-      gstNumber: customer.gstNumber,
-      billingAddress: customer.billingAddress,
-      shippingAddress: customer.shippingAddress,
-      placeOfSupply: customer.placeOfSupply,
+      name: effectiveCustomer.name,
+      email: effectiveCustomer.email,
+      phone: effectiveCustomer.phone,
+      company: effectiveCustomer.company,
+      gstNumber: effectiveCustomer.gstNumber,
+      billingAddress: effectiveCustomer.billingAddress,
+      shippingAddress: effectiveCustomer.shippingAddress,
+      placeOfSupply: effectiveCustomer.placeOfSupply,
     },
     order: {
       orderNumber: order.orderNumber,
@@ -158,18 +209,21 @@ export async function loadInvoiceForOrder(
       total: order.total,
       amountPaid: order.amountPaid,
       balanceDue: order.balanceDue,
+      orderDiscount,
     },
     lines,
     logoBuffer,
     ewb,
     einvoice,
+    paymentModes: paymentModes.length > 0 ? paymentModes : undefined,
+    skipShipTo: !effectiveCustomer.shippingAddress,
   });
 
   return {
     pdf,
     orderNumber: order.orderNumber,
-    customerEmail: customer.email,
-    customerName: customer.name,
+    customerEmail: effectiveCustomer.email,
+    customerName: effectiveCustomer.name,
     status: order.status,
     total: Number(order.total),
   };

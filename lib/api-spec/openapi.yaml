@@ -3853,6 +3853,9 @@ components:
           type: string
           enum: [pos, sales_order]
           description: "Derived from the order number prefix — POS counter sales vs regular sales orders."
+        walkinName:
+          type: ["string", "null"]
+          description: "Walk-in customer name extracted from the POS order notes. Null for regular customers or if no name was captured."
         saleChannel:
           type: ["string", "null"]
           description: "Mode of Sale captured at POS checkout (walkin / website / store / whatsapp / phone / instagram / other). Null for regular sales orders."
@@ -3871,7 +3874,7 @@ components:
             - { $ref: "#/components/schemas/EinvoiceDetails" }
             - { type: "null" }
         createdAt: { type: string }
-      required: [id, orderNumber, customerId, customerName, customerGstNumber, warehouseId, warehouseName, status, orderDate, expectedShipDate, subtotal, taxTotal, total, discountTotal, orderDiscountAmount, amountPaid, balanceDue, notes, orderType, saleChannel, paymentStatus, shopifyOrderId, ewb, einvoice, createdAt]
+      required: [id, orderNumber, customerId, customerName, walkinName, customerGstNumber, warehouseId, warehouseName, status, orderDate, expectedShipDate, subtotal, taxTotal, total, discountTotal, orderDiscountAmount, amountPaid, balanceDue, notes, orderType, saleChannel, paymentStatus, shopifyOrderId, ewb, einvoice, createdAt]
 
     SalesOrderDetail:
       type: object

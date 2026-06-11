@@ -35,6 +35,11 @@ export interface SalesOrder {
   /** Derived from the order number prefix — POS counter sales vs regular sales orders. */
   orderType: SalesOrderOrderType;
   /**
+     * Walk-in customer name extracted from the POS order notes. Null for regular customers or if no name was captured.
+     * @nullable
+     */
+  walkinName: string | null;
+  /**
      * Mode of Sale captured at POS checkout (walkin / website / store / whatsapp / phone / instagram / other). Null for regular sales orders.
      * @nullable
      */

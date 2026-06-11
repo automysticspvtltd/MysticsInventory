@@ -290,7 +290,7 @@ export interface PartyBoxesInput {
   pageLeft: number;
   pageWidth: number;
   left: { label: string; party: DocParty };
-  right: { label: string; party: DocParty };
+  right?: { label: string; party: DocParty } | null;
   height?: number;
 }
 
@@ -316,11 +316,11 @@ function partyToLines(p: DocParty): string[] {
 export function drawPartyBoxes(input: PartyBoxesInput): number {
   const { doc, y, pageLeft, pageWidth, left, right } = input;
   const gap = 12;
-  const colWidth = (pageWidth - gap) / 2;
   const height = input.height ?? 108;
 
+  const colWidth = right ? (pageWidth - gap) / 2 : pageWidth;
+
   const drawBox = (label: string, lines: string[], x0: number) => {
-    // Label strip (subtle background)
     doc
       .save()
       .rect(x0, y, colWidth, 18)
@@ -346,7 +346,6 @@ export function drawPartyBoxes(input: PartyBoxesInput): number {
         characterSpacing: 0.6,
         lineBreak: false,
       });
-    // Body
     let by = y + 24;
     const bodyMax = y + height - 6;
     if (lines[0]) {
@@ -366,11 +365,13 @@ export function drawPartyBoxes(input: PartyBoxesInput): number {
   };
 
   drawBox(left.label.toUpperCase(), partyToLines(left.party), pageLeft);
-  drawBox(
-    right.label.toUpperCase(),
-    partyToLines(right.party),
-    pageLeft + colWidth + gap,
-  );
+  if (right) {
+    drawBox(
+      right.label.toUpperCase(),
+      partyToLines(right.party),
+      pageLeft + colWidth + gap,
+    );
+  }
   return y + height + 14;
 }
 

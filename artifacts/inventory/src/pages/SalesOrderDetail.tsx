@@ -581,16 +581,6 @@ export default function SalesOrderDetail() {
             <Receipt className="mr-1.5 h-4 w-4" />
             {thermalPrinting ? "Printing..." : "Thermal Receipt"}
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleDownloadOrder}
-            disabled={downloadingOrder}
-            data-testid="btn-download-order"
-          >
-            <FileDown className="mr-1.5 h-4 w-4" />
-            {downloadingOrder ? "Preparing..." : "Download Order"}
-          </Button>
           {canInvoice && (
             <>
               <Button
@@ -690,7 +680,7 @@ export default function SalesOrderDetail() {
               </div>
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Customer</p>
-                <Link href="/customers" className="text-primary hover:underline">{order.customerName}</Link>
+                <Link href="/customers" className="text-primary hover:underline">{order.walkinName || order.customerName}</Link>
               </div>
             </div>
             {order.notes && (
@@ -1324,6 +1314,7 @@ function SalesOrderThermalReceipt({
       id: number;
       orderNumber: string;
       customerName?: string | null;
+      walkinName?: string | null;
       saleChannel?: string | null;
       taxTotal: string | number;
       total: string | number;
@@ -1446,10 +1437,10 @@ function SalesOrderThermalReceipt({
             <span>: {cashier}</span>
           </div>
         )}
-        {order.customerName && (
+        {(order.walkinName || (order.customerName && order.customerName !== "Walk-in Customer")) && (
           <div className="kv bold">
             <span>Customer</span>
-            <span>: {order.customerName}</span>
+            <span>: {order.walkinName || order.customerName}</span>
           </div>
         )}
         {customerPhone && (
@@ -1458,9 +1449,18 @@ function SalesOrderThermalReceipt({
             <span>: {customerPhone}</span>
           </div>
         )}
-        {order.saleChannel && (
+        {(payments ?? []).length > 0 && (
           <div className="kv small">
             <span>Mode</span>
+            <span>
+              :{" "}
+              {[...new Set((payments ?? []).map((p) => SO_PAYMENT_LABELS[p.mode ?? ""] ?? (p.mode ?? "Payment")))].join(" + ")}
+            </span>
+          </div>
+        )}
+        {order.saleChannel && order.saleChannel !== "pos" && (
+          <div className="kv small">
+            <span>Channel</span>
             <span>: {SO_CHANNEL_LABELS[order.saleChannel] ?? order.saleChannel}</span>
           </div>
         )}

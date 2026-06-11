@@ -46,6 +46,7 @@ export interface InvoicePdfLine {
   quantity: number | string;
   unitPrice: number | string;
   taxRate: number | string;
+  discountAmount?: number | string | null;
   lineSubtotal: number | string;
   lineTax: number | string;
   lineTotal: number | string;
@@ -61,6 +62,7 @@ export interface InvoicePdfOrder {
   total: number | string;
   amountPaid: number | string;
   balanceDue: number | string;
+  orderDiscount?: number | string | null;
 }
 
 export interface InvoicePdfEwb {
@@ -93,6 +95,8 @@ export interface RenderInvoiceInput {
   logoBuffer?: Buffer | null;
   ewb?: InvoicePdfEwb | null;
   einvoice?: InvoicePdfEinvoice | null;
+  paymentModes?: Array<{ mode: string; amount: number }>;
+  skipShipTo?: boolean;
 }
 
 interface ComputedLine {
@@ -271,7 +275,9 @@ export async function renderInvoicePdf(
     pageLeft,
     pageWidth,
     left: { label: "Bill to", party: customerToParty(customer, false) },
-    right: { label: "Ship to", party: customerToParty(customer, true) },
+    right: input.skipShipTo
+      ? null
+      : { label: "Ship to", party: customerToParty(customer, true) },
   });
 
   // ---- Line table -------------------------------------------------------
@@ -283,10 +289,14 @@ export async function renderInvoicePdf(
 
   for (let i = 0; i < computed.length; i++) {
     const c = computed[i]!;
-    const subtext = [c.src.sku, c.src.description]
+    const discAmt = toNum(c.src.discountAmount ?? 0);
+    const subtextParts = [c.src.sku, c.src.description]
       .map((s) => (s ?? "").trim())
-      .filter(Boolean)
-      .join(" — ");
+      .filter(Boolean);
+    if (discAmt > 0.005) {
+      subtextParts.push(`(-) Disc: ${fmtMoney(discAmt)}`);
+    }
+    const subtext = subtextParts.join(" — ");
     const halfRate = (toNum(c.src.taxRate) / 2).toFixed(1);
     const fullRate = toNum(c.src.taxRate).toFixed(1);
     const values = intra
@@ -348,7 +358,20 @@ export async function renderInvoicePdf(
     });
   };
 
+  const orderDiscount = toNum(order.orderDiscount ?? 0);
+  const PAYMENT_LABELS: Record<string, string> = {
+    cash: "Cash",
+    upi: "UPI",
+    card: "Card",
+    bank: "Bank Transfer",
+    razorpay: "Razorpay",
+    other: "Other",
+  };
+
   total_("Subtotal", fmtMoney(subtotal));
+  if (orderDiscount > 0.005) {
+    total_("(-) Discount", fmtMoney(orderDiscount), { muted: true });
+  }
   if (intra) {
     total_("CGST", fmtMoney(computed.reduce((s, l) => s + l.cgst, 0)));
     total_("SGST", fmtMoney(computed.reduce((s, l) => s + l.sgst, 0)));
@@ -357,7 +380,12 @@ export async function renderInvoicePdf(
   }
   if (Math.abs(taxTotal) > 0.005) total_("Total tax", fmtMoney(taxTotal));
   total_("Grand total (INR)", fmtMoney(total), { emphasized: true });
-  if (amountPaid > 0.005) {
+  if ((input.paymentModes ?? []).length > 0) {
+    for (const pm of input.paymentModes!) {
+      const modeLabel = PAYMENT_LABELS[pm.mode] ?? pm.mode;
+      total_(`Mode: ${modeLabel}`, fmtMoney(pm.amount), { muted: true });
+    }
+  } else if (amountPaid > 0.005) {
     total_("Amount paid", fmtMoney(amountPaid), { muted: true });
   }
   if (Math.abs(balance) > 0.005) {

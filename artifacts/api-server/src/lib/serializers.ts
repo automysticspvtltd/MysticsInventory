@@ -243,6 +243,17 @@ function parsePosSaleChannel(notes: string | null): string | null {
   return id ?? null;
 }
 
+function parseWalkinName(notes: string | null): string | null {
+  if (!notes) return null;
+  const walkInLine = notes.split("\n").find((l) => l.startsWith("Walk-in:"));
+  if (!walkInLine) return null;
+  const content = walkInLine.replace(/^Walk-in:\s*/, "").trim();
+  const withPhone = content.match(/^(.+?)\s*\(\d{5,15}\)$/);
+  if (withPhone) return withPhone[1].trim() || null;
+  if (/^\d{5,15}$/.test(content)) return null;
+  return content || null;
+}
+
 /**
  * Derives a consistent paymentStatus from the actual financial figures.
  * Corrects stale stored values (e.g. "partially_paid" when balanceDue is
@@ -265,12 +276,15 @@ export function serializeSalesOrder(
   customerGstNumber: string | null = null,
   discountTotal: string | number = "0",
 ) {
-  const orderType = o.orderNumber.startsWith("POS-") ? "pos" : "sales_order";
+  const saleChannel = parsePosSaleChannel(o.notes);
+  const orderType =
+    o.orderNumber.startsWith("POS-") || saleChannel !== null ? "pos" : "sales_order";
   return {
     id: o.id,
     orderNumber: o.orderNumber,
     customerId: o.customerId,
     customerName,
+    walkinName: orderType === "pos" ? parseWalkinName(o.notes) : null,
     customerGstNumber,
     warehouseId: o.warehouseId,
     warehouseName,
@@ -286,7 +300,7 @@ export function serializeSalesOrder(
     balanceDue: toNum(o.balanceDue),
     notes: o.notes,
     orderType,
-    saleChannel: orderType === "pos" ? parsePosSaleChannel(o.notes) : null,
+    saleChannel: orderType === "pos" ? saleChannel : null,
     paymentStatus: derivePaymentStatus(o.paymentStatus, toNum(o.amountPaid), toNum(o.balanceDue)),
     shopifyOrderId: o.shopifyOrderId,
     ewb: serializeSalesOrderEwb(o),
