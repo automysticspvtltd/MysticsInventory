@@ -1273,9 +1273,20 @@ function ThermalReceipt({ receipt }: { receipt: PosCheckoutResult | null }) {
                 <span>: {r._walkin.phone}</span>
               </div>
             )}
-            {r._channel && (
+            {payments.length > 0 && (
               <div className="kv small">
                 <span>Mode</span>
+                <span>
+                  :{" "}
+                  {[...new Set(payments.map((p) => PAYMENT_LABELS[p.mode] ?? p.mode))].join(
+                    " + ",
+                  )}
+                </span>
+              </div>
+            )}
+            {r._channel && r._channel !== "pos" && (
+              <div className="kv small">
+                <span>Channel</span>
                 <span>: {SALE_CHANNEL_LABELS[r._channel]}</span>
               </div>
             )}
