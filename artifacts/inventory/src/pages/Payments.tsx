@@ -118,10 +118,9 @@ export default function Payments() {
             <SelectContent>
               <SelectItem value="all">All modes</SelectItem>
               <SelectItem value="cash">Cash</SelectItem>
-              <SelectItem value="bank">Bank</SelectItem>
               <SelectItem value="upi">UPI</SelectItem>
-              <SelectItem value="cheque">Cheque</SelectItem>
-              <SelectItem value="razorpay">Razorpay</SelectItem>
+              <SelectItem value="card">Card</SelectItem>
+              <SelectItem value="bank">Bank</SelectItem>
               <SelectItem value="other">Other</SelectItem>
             </SelectContent>
           </Select>
@@ -235,6 +234,7 @@ export default function Payments() {
           onOpenChange={setRecordOpen}
           customerId={customerIdNum}
           customerName={selectedCustomer?.name}
+          customerPhone={selectedCustomer?.phone ?? undefined}
         />
       )}
     </div>

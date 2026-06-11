@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import {
   useCreateCustomerPayment,
   useListSalesOrders,
-  useListCustomers,
   getGetSalesOrderQueryKey,
   getListSalesOrdersQueryKey,
   getListCustomerPaymentsQueryKey,
@@ -13,21 +12,12 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useQueryClient } from "@tanstack/react-query";
@@ -36,10 +26,9 @@ import { formatCurrency } from "@/lib/format";
 
 const PAYMENT_MODES = [
   { value: "cash", label: "Cash" },
-  { value: "bank", label: "Bank transfer" },
   { value: "upi", label: "UPI" },
-  { value: "cheque", label: "Cheque" },
-  { value: "razorpay", label: "Razorpay" },
+  { value: "card", label: "Card" },
+  { value: "bank", label: "Bank" },
   { value: "other", label: "Other" },
 ] as const;
 
@@ -50,6 +39,7 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   customerId: number;
   customerName?: string;
+  customerPhone?: string;
   presetSalesOrderId?: number;
   presetSalesOrderBalance?: number;
 }
@@ -59,6 +49,7 @@ export function RecordPaymentDialog({
   onOpenChange,
   customerId,
   customerName,
+  customerPhone,
   presetSalesOrderId,
   presetSalesOrderBalance,
 }: Props) {
@@ -69,8 +60,8 @@ export function RecordPaymentDialog({
     new Date().toISOString().slice(0, 10),
   );
   const [amount, setAmount] = useState("");
-  const [mode, setMode] = useState<string>("upi");
-  const [reference, setReference] = useState("");
+  const [discount, setDiscount] = useState("");
+  const [mode, setMode] = useState<string>("cash");
   const [bankAccount, setBankAccount] = useState("");
   const [notes, setNotes] = useState("");
   const [allocations, setAllocations] = useState<Allocation[]>([]);
@@ -101,8 +92,8 @@ export function RecordPaymentDialog({
     setAmount(
       presetSalesOrderBalance ? presetSalesOrderBalance.toFixed(2) : "",
     );
-    setMode("upi");
-    setReference("");
+    setMode("cash");
+    setDiscount("");
     setBankAccount("");
     setNotes("");
     if (presetSalesOrderId && presetSalesOrderBalance) {
@@ -122,6 +113,7 @@ export function RecordPaymentDialog({
     0,
   );
   const amountNum = Number(amount) || 0;
+  const discountNum = Number(discount) || 0;
   const overAllocated = totalAllocated - amountNum > 0.005;
 
   const toggleAllocation = (orderId: number, balance: number) => {
@@ -194,15 +186,20 @@ export function RecordPaymentDialog({
     const cleanedAllocations = allocations
       .map((a) => ({ salesOrderId: a.salesOrderId, amount: Number(a.amount) }))
       .filter((a) => a.amount > 0);
+
+    const noteParts: string[] = [];
+    if (discountNum > 0) noteParts.push(`Discount: ₹${discountNum.toFixed(2)}`);
+    if (notes.trim()) noteParts.push(notes.trim());
+
     createMutation.mutate({
       data: {
         customerId,
         paymentDate,
         amount: amountNum,
         mode,
-        referenceNumber: reference || null,
+        referenceNumber: null,
         bankAccountLabel: bankAccount || null,
-        notes: notes || null,
+        notes: noteParts.join("\n") || null,
         allocations: cleanedAllocations,
       },
     });
@@ -213,14 +210,18 @@ export function RecordPaymentDialog({
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Record payment</DialogTitle>
-          <DialogDescription>
-            {customerName
-              ? `From ${customerName}`
-              : "Capture a customer payment and apply it to open invoices."}
-          </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-4">
+          {(customerName || customerPhone) && (
+            <div className="rounded-md bg-muted/50 px-4 py-3 flex items-center justify-between">
+              <div>
+                {customerName && <p className="font-medium">{customerName}</p>}
+                {customerPhone && <p className="text-sm text-muted-foreground">{customerPhone}</p>}
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <Label htmlFor="payment-date">Payment date</Label>
@@ -246,42 +247,48 @@ export function RecordPaymentDialog({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label>Mode</Label>
-              <Select value={mode} onValueChange={setMode}>
-                <SelectTrigger data-testid="select-payment-mode">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PAYMENT_MODES.map((m) => (
-                    <SelectItem key={m.value} value={m.value}>
-                      {m.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="payment-reference">Reference / Txn ID</Label>
-              <Input
-                id="payment-reference"
-                value={reference}
-                onChange={(e) => setReference(e.target.value)}
-                data-testid="input-payment-reference"
-              />
+          <div className="space-y-1.5">
+            <Label>Mode</Label>
+            <div className="flex flex-wrap gap-2">
+              {PAYMENT_MODES.map((m) => (
+                <Button
+                  key={m.value}
+                  type="button"
+                  size="sm"
+                  variant={mode === m.value ? "default" : "outline"}
+                  onClick={() => setMode(m.value)}
+                  data-testid={`btn-payment-mode-${m.value}`}
+                >
+                  {m.label}
+                </Button>
+              ))}
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="payment-bank">Bank / wallet (optional)</Label>
-            <Input
-              id="payment-bank"
-              value={bankAccount}
-              onChange={(e) => setBankAccount(e.target.value)}
-              placeholder="e.g. HDFC current 1234"
-              data-testid="input-payment-bank"
-            />
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="payment-discount">Discount (optional)</Label>
+              <Input
+                id="payment-discount"
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="0.00"
+                value={discount}
+                onChange={(e) => setDiscount(e.target.value)}
+                data-testid="input-payment-discount"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="payment-bank">Bank / wallet (optional)</Label>
+              <Input
+                id="payment-bank"
+                value={bankAccount}
+                onChange={(e) => setBankAccount(e.target.value)}
+                placeholder="e.g. HDFC current 1234"
+                data-testid="input-payment-bank"
+              />
+            </div>
           </div>
 
           <div className="space-y-1.5">
@@ -381,7 +388,7 @@ export function RecordPaymentDialog({
           </div>
         </div>
 
-        <DialogFooter>
+        <div className="flex justify-end gap-2 pt-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
@@ -392,7 +399,7 @@ export function RecordPaymentDialog({
           >
             {createMutation.isPending ? "Saving…" : "Record payment"}
           </Button>
-        </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );
