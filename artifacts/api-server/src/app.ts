@@ -61,9 +61,9 @@ const FRONTEND_DIST = path.resolve(
 );
 if (existsSync(path.join(FRONTEND_DIST, "index.html"))) {
   app.use(express.static(FRONTEND_DIST, { index: false }));
-  // SPA fallback: any route that isn't /api/* gets index.html so
+  // SPA fallback: any non-/api request gets index.html so
   // client-side routing (wouter) handles it.
-  app.use("/{*path}", (_req: Request, res: Response, next: NextFunction) => {
+  app.use((_req: Request, res: Response, next: NextFunction) => {
     res.sendFile(path.join(FRONTEND_DIST, "index.html"), (err) => {
       if (err) next(err);
     });
