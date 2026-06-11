@@ -33,6 +33,35 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
  *   - In local plain-HTTP dev we fall back to SameSite=Lax (browsers
  *     reject SameSite=None without Secure).
  */
+const SESSION_TABLE_DDL = `
+  CREATE TABLE IF NOT EXISTS "session" (
+    "sid"    varchar      NOT NULL COLLATE "default",
+    "sess"   json         NOT NULL,
+    "expire" timestamp(6) NOT NULL
+  );
+  DO $$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'session_pkey'
+    ) THEN
+      ALTER TABLE "session"
+        ADD CONSTRAINT "session_pkey" PRIMARY KEY ("sid")
+        NOT DEFERRABLE INITIALLY IMMEDIATE;
+    END IF;
+  END$$;
+  CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire");
+`;
+
+/**
+ * Ensures the session table exists in the database.
+ * Must be awaited at server startup BEFORE app.listen() so that the
+ * table is guaranteed to exist before the first request arrives.
+ */
+export async function ensureSessionTable(): Promise<void> {
+  if (!process.env.DATABASE_URL) return;
+  await pool.query(SESSION_TABLE_DDL);
+}
+
 export function buildSessionMiddleware(): RequestHandler {
   const secret = process.env.APP_ENCRYPTION_KEY;
   if (!secret || secret.length < 16) {
@@ -48,35 +77,6 @@ export function buildSessionMiddleware(): RequestHandler {
 
   let store: Store;
   if (process.env.DATABASE_URL) {
-    // Create the session table ourselves rather than relying on
-    // connect-pg-simple's `createTableIfMissing`. The latter reads
-    // `table.sql` via `__dirname`, which esbuild rewrites to the
-    // bundle's dist/ directory at build time — causing ENOENT in
-    // production. The DDL below is copied verbatim from
-    // connect-pg-simple/table.sql.
-    pool
-      .query(
-        `CREATE TABLE IF NOT EXISTS "session" (
-           "sid"    varchar      NOT NULL COLLATE "default",
-           "sess"   json         NOT NULL,
-           "expire" timestamp(6) NOT NULL
-         );
-         DO $$
-         BEGIN
-           IF NOT EXISTS (
-             SELECT 1 FROM pg_constraint WHERE conname = 'session_pkey'
-           ) THEN
-             ALTER TABLE "session"
-               ADD CONSTRAINT "session_pkey" PRIMARY KEY ("sid")
-               NOT DEFERRABLE INITIALLY IMMEDIATE;
-           END IF;
-         END$$;
-         CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire");`,
-      )
-      .catch((err) => {
-        // eslint-disable-next-line no-console
-        console.error("[sessions] failed to ensure session table:", err);
-      });
 
     const PgStore = connectPgSimple(session);
     store = new PgStore({

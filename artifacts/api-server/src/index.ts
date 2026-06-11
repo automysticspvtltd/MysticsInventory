@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { ensureSessionTable } from "./lib/sessions";
 import { startShiprocketSyncScheduler } from "./lib/shiprocketSync";
 import {
   recoverInFlightBulkBatches,
@@ -20,6 +21,14 @@ const port = Number(rawPort);
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
+
+// Ensure the session table exists before accepting any requests.
+// This is blocking by design — a missing session table means every
+// login fails, so we must not start listening until it's guaranteed.
+await ensureSessionTable().catch((err) => {
+  logger.error({ err }, "Failed to ensure session table — aborting startup");
+  process.exit(1);
+});
 
 app.listen(port, (err) => {
   if (err) {
