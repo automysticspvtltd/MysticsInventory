@@ -94,8 +94,9 @@ router.patch("/organizations/current", async (req, res, next) => {
       } else {
         const cleaned = String(raw)
           .toUpperCase()
-          .replace(/[^A-Z0-9]/g, "")
-          .slice(0, 10);
+          .replace(/[^A-Z0-9\-]/g, "")
+          .replace(/^-+|-+$/g, "")
+          .slice(0, 15);
         updates.posBillPrefix = cleaned || null;
       }
     }

@@ -541,9 +541,12 @@ export async function executePosCheckout(
       });
     const billNum = (orgBillRow?.nextNumber ?? 2) - 1;
     const billPrefix =
-      orgBillRow?.prefix?.trim().toUpperCase().replace(/[^A-Z0-9]/g, "") ||
-      "BILL";
-    const orderNumber = `${billPrefix}-${String(billNum).padStart(4, "0")}`;
+      orgBillRow?.prefix
+        ?.trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9\-]/g, "")
+        .replace(/^-+|-+$/g, "") || "BILL";
+    const orderNumber = `${billPrefix}-${String(billNum).padStart(5, "0")}`;
     const today = new Date().toISOString().slice(0, 10);
     // Apply order-level discount on top of line totals.
     const lineTotal = toNum(totals.total);

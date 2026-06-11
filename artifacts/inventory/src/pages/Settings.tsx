@@ -576,10 +576,14 @@ function PosBillNumberCard() {
 
   if (!org) return null;
 
-  const cleanedPrefix = prefix.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10);
+  const cleanedPrefix = prefix
+    .toUpperCase()
+    .replace(/[^A-Z0-9\-]/g, "")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 15);
   const effectivePrefix = cleanedPrefix || "BILL";
   const nextNumVal = Math.max(1, Math.floor(Number(nextNum) || 1));
-  const previewNum = String(nextNumVal).padStart(4, "0");
+  const previewNum = String(nextNumVal).padStart(5, "0");
   const previewBill = `${effectivePrefix}-${previewNum}`;
 
   return (
