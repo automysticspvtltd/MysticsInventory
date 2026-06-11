@@ -616,6 +616,14 @@ export default function Items() {
     [allItemsForOptions],
   );
 
+  const selectedExportRows = useMemo(
+    () =>
+      selectedIds.size > 0
+        ? (allItemsForOptions ?? []).filter((i) => selectedIds.has(i.id))
+        : [],
+    [allItemsForOptions, selectedIds],
+  );
+
   const createMutation = useCreateItem({
     mutation: {
       onSuccess: () => {
@@ -1147,6 +1155,7 @@ export default function Items() {
             filename="items"
             columns={exportColumns}
             rows={exportRows}
+            selectedRows={selectedIds.size > 0 ? selectedExportRows : undefined}
             hidePdf
           />
         </div>

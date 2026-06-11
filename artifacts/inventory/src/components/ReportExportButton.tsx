@@ -8,6 +8,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
@@ -22,6 +24,7 @@ type Props<T> = {
   title?: string;
   columns: ExportColumn<T>[];
   rows: T[];
+  selectedRows?: T[];
   disabled?: boolean;
   meta?: { label: string; value: string }[];
   hidePdf?: boolean;
@@ -59,7 +62,6 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-// jsPDF's built-in Helvetica font doesn't include ₹ — replace with Rs.
 function pdfSafe(v: unknown): string {
   return String(v ?? "").replace(/₹/g, "Rs.");
 }
@@ -69,16 +71,17 @@ export function ReportExportButton<T>({
   title,
   columns,
   rows,
+  selectedRows,
   disabled,
   meta,
   hidePdf,
 }: Props<T>) {
   const { toast } = useToast();
   const baseName = safeFilename(filename);
-  const isEmpty = !rows || rows.length === 0;
+  const hasSelected = selectedRows && selectedRows.length > 0;
 
-  const exportCsv = () => {
-    const { headers, body } = rowsToMatrix(columns, rows);
+  const makeCsv = (targetRows: T[]) => {
+    const { headers, body } = rowsToMatrix(columns, targetRows);
     const csv = Papa.unparse({ fields: headers, data: body });
     downloadBlob(
       new Blob([csv], { type: "text/csv;charset=utf-8" }),
@@ -86,12 +89,11 @@ export function ReportExportButton<T>({
     );
   };
 
-  const exportExcel = () => {
-    const { headers, body } = rowsToMatrix(columns, rows);
+  const makeExcel = (targetRows: T[]) => {
+    const { headers, body } = rowsToMatrix(columns, targetRows);
     const sheetData: (string | number)[][] = [];
     sheetData.push(headers);
     for (const r of body) sheetData.push(r as (string | number)[]);
-
     const sheet = XLSX.utils.aoa_to_sheet(sheetData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, sheet, "Report");
@@ -104,47 +106,36 @@ export function ReportExportButton<T>({
     );
   };
 
-  const exportPdf = () => {
-    const { headers, body } = rowsToMatrix(columns, rows);
+  const makePdf = (targetRows: T[]) => {
+    const { headers, body } = rowsToMatrix(columns, targetRows);
     const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
     const pageW = doc.internal.pageSize.getWidth();
     const pageH = doc.internal.pageSize.getHeight();
     const margin = 40;
 
-    // ── Brand colours ──────────────────────────────────────────────
     const AMBER_R = 193, AMBER_G = 127, AMBER_B = 38;
     const DARK_R  = 25,  DARK_G  = 25,  DARK_B  = 25;
     const GRAY_R  = 110, GRAY_G  = 110, GRAY_B  = 110;
     const LIGHT_R = 252, LIGHT_G = 248, LIGHT_B = 240;
 
-    // ── Header bar ─────────────────────────────────────────────────
     doc.setFillColor(AMBER_R, AMBER_G, AMBER_B);
     doc.rect(0, 0, pageW, 56, "F");
-
-    // Thin darker amber stripe at very top
     doc.setFillColor(160, 100, 20);
     doc.rect(0, 0, pageW, 3, "F");
-
-    // Company name
     doc.setFont("helvetica", "bold");
     doc.setFontSize(18);
     doc.setTextColor(255, 255, 255);
     doc.text("MM Wear ERP", margin, 36);
-
-    // Report title (right-aligned in header)
     if (title) {
       doc.setFont("helvetica", "normal");
       doc.setFontSize(10);
       doc.setTextColor(255, 240, 200);
       doc.text(pdfSafe(title), pageW - margin, 36, { align: "right" });
     }
-
-    // ── Subheader row (white bg, slim) ─────────────────────────────
     doc.setFillColor(245, 245, 245);
     doc.rect(0, 56, pageW, 22, "F");
     doc.setFillColor(220, 220, 220);
     doc.rect(0, 77, pageW, 0.5, "F");
-
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
     doc.setTextColor(GRAY_R, GRAY_G, GRAY_B);
@@ -153,110 +144,71 @@ export function ReportExportButton<T>({
       hour: "2-digit", minute: "2-digit",
     });
     doc.text(`Generated: ${dateStr}`, margin, 71);
-    doc.text("Confidential — MM Wear Internal Use Only", pageW - margin, 71, {
-      align: "right",
-    });
+    doc.text("Confidential — MM Wear Internal Use Only", pageW - margin, 71, { align: "right" });
 
     let cursorY = 98;
-
-    // ── Meta stat cards ────────────────────────────────────────────
     if (meta && meta.length > 0) {
       const cardGap = 10;
       const cardW = (pageW - margin * 2 - cardGap * (meta.length - 1)) / meta.length;
       const cardH = 42;
-
       for (let i = 0; i < meta.length; i++) {
         const bx = margin + i * (cardW + cardGap);
-
-        // Card background
         doc.setFillColor(LIGHT_R, LIGHT_G, LIGHT_B);
         doc.setDrawColor(220, 185, 110);
         doc.setLineWidth(0.6);
         doc.roundedRect(bx, cursorY, cardW, cardH, 3, 3, "FD");
-
-        // Left amber accent bar
         doc.setFillColor(AMBER_R, AMBER_G, AMBER_B);
         doc.roundedRect(bx, cursorY, 4, cardH, 2, 2, "F");
-        doc.rect(bx + 2, cursorY, 2, cardH, "F"); // square off right side of accent
-
-        // Label
+        doc.rect(bx + 2, cursorY, 2, cardH, "F");
         doc.setFont("helvetica", "normal");
         doc.setFontSize(7);
         doc.setTextColor(GRAY_R, GRAY_G, GRAY_B);
         doc.text(meta[i].label.toUpperCase(), bx + 12, cursorY + 14);
-
-        // Value
         doc.setFont("helvetica", "bold");
         doc.setFontSize(12);
         doc.setTextColor(DARK_R, DARK_G, DARK_B);
         doc.text(pdfSafe(meta[i].value), bx + 12, cursorY + 30);
       }
-
       cursorY += cardH + 14;
     }
-
-    // ── Section divider ────────────────────────────────────────────
     doc.setDrawColor(AMBER_R, AMBER_G, AMBER_B);
     doc.setLineWidth(1);
     doc.line(margin, cursorY, pageW - margin, cursorY);
     cursorY += 8;
-
-    // ── Data table ─────────────────────────────────────────────────
     autoTable(doc, {
       head: [headers],
       body: body.map((r) => r.map((cell) => pdfSafe(cell))),
       startY: cursorY,
       styles: {
-        fontSize: 9,
-        font: "helvetica",
+        fontSize: 9, font: "helvetica",
         cellPadding: { top: 5, bottom: 5, left: 7, right: 7 },
         textColor: [DARK_R, DARK_G, DARK_B],
-        lineColor: [225, 225, 225],
-        lineWidth: 0.3,
+        lineColor: [225, 225, 225], lineWidth: 0.3,
       },
       headStyles: {
-        fillColor: [DARK_R, DARK_G, DARK_B],
-        textColor: [255, 255, 255],
-        fontStyle: "bold",
-        fontSize: 9,
+        fillColor: [DARK_R, DARK_G, DARK_B], textColor: [255, 255, 255],
+        fontStyle: "bold", fontSize: 9,
         cellPadding: { top: 6, bottom: 6, left: 7, right: 7 },
       },
-      alternateRowStyles: {
-        fillColor: [LIGHT_R, LIGHT_G, LIGHT_B],
-      },
+      alternateRowStyles: { fillColor: [LIGHT_R, LIGHT_G, LIGHT_B] },
       margin: { left: margin, right: margin, bottom: 40 },
       didDrawPage: (data) => {
-        // Footer line
         doc.setDrawColor(210, 210, 210);
         doc.setLineWidth(0.4);
         doc.line(margin, pageH - 30, pageW - margin, pageH - 30);
-
-        // Footer left: branding
         doc.setFont("helvetica", "normal");
         doc.setFontSize(7.5);
         doc.setTextColor(GRAY_R, GRAY_G, GRAY_B);
         doc.text("MM Wear ERP", margin, pageH - 18);
-
-        // Footer centre: report title
-        if (title) {
-          doc.text(pdfSafe(title), pageW / 2, pageH - 18, { align: "center" });
-        }
-
-        // Footer right: page number
-        doc.text(
-          `Page ${data.pageNumber}`,
-          pageW - margin,
-          pageH - 18,
-          { align: "right" },
-        );
+        if (title) doc.text(pdfSafe(title), pageW / 2, pageH - 18, { align: "center" });
+        doc.text(`Page ${data.pageNumber}`, pageW - margin, pageH - 18, { align: "right" });
       },
     });
-
     doc.save(`${baseName}.pdf`);
   };
 
-  const onClick = (handler: () => void, label: string) => () => {
-    if (isEmpty) {
+  const guard = (handler: () => void, label: string, targetRows: T[]) => () => {
+    if (!targetRows || targetRows.length === 0) {
       toast({
         title: "Nothing to export",
         description: "There are no rows to include in the export.",
@@ -288,23 +240,46 @@ export function ReportExportButton<T>({
           Export
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent align="end" className="min-w-[180px]">
+        {hasSelected && (
+          <>
+            <DropdownMenuLabel className="text-xs font-medium text-muted-foreground pb-1">
+              Export selected ({selectedRows.length})
+            </DropdownMenuLabel>
+            <DropdownMenuItem
+              onSelect={guard(() => makeCsv(selectedRows), "CSV", selectedRows)}
+              data-testid="menu-export-selected-csv"
+            >
+              CSV
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={guard(() => makeExcel(selectedRows), "Excel", selectedRows)}
+              data-testid="menu-export-selected-excel"
+            >
+              Excel (.xlsx)
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-xs font-medium text-muted-foreground pb-1">
+              Export all
+            </DropdownMenuLabel>
+          </>
+        )}
         {!hidePdf && (
           <DropdownMenuItem
-            onSelect={onClick(exportPdf, "PDF")}
+            onSelect={guard(() => makePdf(rows), "PDF", rows)}
             data-testid="menu-export-pdf"
           >
             PDF
           </DropdownMenuItem>
         )}
         <DropdownMenuItem
-          onSelect={onClick(exportExcel, "Excel")}
+          onSelect={guard(() => makeExcel(rows), "Excel", rows)}
           data-testid="menu-export-excel"
         >
           Excel (.xlsx)
         </DropdownMenuItem>
         <DropdownMenuItem
-          onSelect={onClick(exportCsv, "CSV")}
+          onSelect={guard(() => makeCsv(rows), "CSV", rows)}
           data-testid="menu-export-csv"
         >
           CSV

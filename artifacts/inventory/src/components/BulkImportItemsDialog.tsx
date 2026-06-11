@@ -465,7 +465,7 @@ export function BulkImportItemsDialog({
   const [fileName, setFileName] = useState<string | null>(null);
   const [rows, setRows] = useState<UnifiedRow[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
-  const [mode, setMode] = useState<Mode>("create");
+  const [mode, setMode] = useState<Mode>("upsert");
   const [results, setResults] = useState<UnifiedResultRow[] | null>(null);
   const [counts, setCounts] = useState<UnifiedImportResponse["counts"] | null>(
     null,
