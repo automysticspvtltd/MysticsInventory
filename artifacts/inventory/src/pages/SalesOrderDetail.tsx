@@ -1,4 +1,5 @@
 import { useParams, Link, useLocation } from "wouter";
+import { useImageSrc } from "@/hooks/use-image-src";
 import { PageHeader } from "@/components/PageHeader";
 import {
   useGetSalesOrder,
@@ -411,87 +412,14 @@ export default function SalesOrderDetail() {
 
   const handleThermalPrint = async () => {
     if (!orderDetail) return;
-    const allowed = await checkAndRecordPrint("sales_order_thermal", orderId);
-    if (!allowed) return;
     setThermalPrinting(true);
-    const { order, lines } = orderDetail;
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const now = new Date();
-    let h = now.getHours();
-    const ampm = h >= 12 ? "pm" : "am";
-    h = h % 12 || 12;
-    const dateStr = `${pad(now.getDate())}.${pad(now.getMonth() + 1)}.${now.getFullYear()}, ${pad(h)}.${pad(now.getMinutes())} ${ampm}`;
-    const cashier = me?.user?.name || me?.user?.email || "";
-    const addressParts = [
-      org?.addressLine1,
-      org?.addressLine2,
-      [org?.city, org?.state, org?.postalCode].filter(Boolean).join(" "),
-      org?.country,
-    ].filter((p): p is string => !!p && p.trim().length > 0);
-    const totalQty = lines.reduce((s, l) => s + Number(l.quantity), 0);
-    const linesHtml = lines.map((l) => {
-      const gross = Number(l.quantity) * Number(l.unitPrice);
-      const disc = Number(l.discountAmount ?? 0);
-      return `<tr>
-        <td>${l.itemName}<br/><span style="font-size:7pt">${l.sku}</span></td>
-        <td style="text-align:right">${l.quantity}</td>
-        <td style="text-align:right">${Number(l.unitPrice).toFixed(2)}</td>
-        <td style="text-align:right">${gross.toFixed(2)}</td>
-      </tr>${disc > 0 ? `<tr style="font-size:8pt;color:#444"><td colspan="3" style="padding-left:3mm">(-) Item Discount</td><td style="text-align:right">-${disc.toFixed(2)}</td></tr>` : ""}`;
-    }).join("");
-    const tax = Number(order.taxTotal);
-    const total = Number(order.total);
-    const subtotal = Number(order.subtotal);
-    const discTotal = Number(order.discountTotal ?? 0);
-    const html = `<style>
-      @media print {
-        body * { visibility: hidden !important; }
-        #_so_thermal_, #_so_thermal_ * { visibility: visible !important; }
-        #_so_thermal_ { display: block !important; position: absolute !important; left: 0; top: 0; width: 72mm; padding: 3mm 4mm; }
-        @page { size: 72mm auto; margin: 0; }
-      }
-      #_so_thermal_ { display: none; font-family: Georgia,'Times New Roman',serif; font-size: 9pt; line-height: 1.35; color: #000; background: #fff; }
-      #_so_thermal_ table { width: 100%; border-collapse: collapse; }
-      #_so_thermal_ th, #_so_thermal_ td { text-align: left; padding: 0.6mm 0; vertical-align: top; }
-      #_so_thermal_ thead th { border-bottom: 1px solid #000; }
-      #_so_thermal_ tfoot td { padding-top: 1mm; }
-      #_so_thermal_ .sep { border-top: 1px dashed #000; margin: 1.5mm 0; }
-      #_so_thermal_ .kv { display: flex; gap: 2mm; }
-      #_so_thermal_ .kv > span:first-child { width: 28mm; flex-shrink: 0; }
-      #_so_thermal_ .total-row td { border-top: 1px solid #000; font-size: 11.5pt; font-weight: 700; padding-top: 1mm; }
-    </style>
-    <div id="_so_thermal_">
-      ${org?.name ? `<div style="text-align:center;font-size:15pt;font-weight:700">${org.name}</div>` : ""}
-      ${addressParts.map((p) => `<div style="text-align:center;font-size:8pt">${p}</div>`).join("")}
-      ${org?.gstNumber ? `<div style="text-align:center;font-size:8pt">GSTIN : ${org.gstNumber}</div>` : ""}
-      <div style="text-align:center;font-size:11pt;font-weight:700;margin:1.5mm 0 0.5mm">Retail Invoice</div>
-      <div class="sep"></div>
-      <div class="kv"><span>Date</span><span>: ${dateStr}</span></div>
-      <div class="kv"><span>Bill No</span><span>: ${order.orderNumber}</span></div>
-      ${cashier ? `<div class="kv"><span>Cashier</span><span>: ${cashier}</span></div>` : ""}
-      ${order.customerName && order.customerName !== "Walk-in Customer" ? `<div class="kv" style="font-weight:700"><span>Customer</span><span>: ${order.customerName}</span></div>` : ""}
-      <div class="sep"></div>
-      <table>
-        <thead><tr><th>Item</th><th style="text-align:right">Qty</th><th style="text-align:right">Price</th><th style="text-align:right">Amount</th></tr></thead>
-        <tbody>${linesHtml}</tbody>
-        <tfoot>
-          <tr><td style="font-weight:700">Sub Total</td><td style="text-align:right;font-weight:700">${totalQty}</td><td></td><td style="text-align:right;font-weight:700">${subtotal.toFixed(2)}</td></tr>
-          ${discTotal > 0 ? `<tr><td colspan="3">(-) Order Discount</td><td style="text-align:right">-${discTotal.toFixed(2)}</td></tr>` : ""}
-          ${tax > 0 ? `<tr><td colspan="3">Tax</td><td style="text-align:right">${tax.toFixed(2)}</td></tr>` : ""}
-          <tr class="total-row"><td colspan="3">TOTAL</td><td style="text-align:right">RS ${total.toFixed(2)}</td></tr>
-        </tfoot>
-      </table>
-      <div class="sep"></div>
-      ${org?.invoiceFooter ? `<div style="text-align:center;font-weight:700;font-size:11pt">${org.invoiceFooter}</div>` : ""}
-      <div style="text-align:center;font-size:8pt">Thank you for your purchase</div>
-      <div style="text-align:center;font-size:7pt">This is a Computer Generated Invoice</div>
-    </div>`;
-    const el = document.createElement("div");
-    el.innerHTML = html;
-    document.body.appendChild(el);
-    const cleanup = () => { el.remove(); window.removeEventListener("afterprint", cleanup); setThermalPrinting(false); };
-    window.addEventListener("afterprint", cleanup);
-    window.print();
+    try {
+      const allowed = await checkAndRecordPrint("sales_order_thermal", orderId);
+      if (!allowed) return;
+      window.print();
+    } finally {
+      setThermalPrinting(false);
+    }
   };
 
   if (isLoading || !orderDetail) {
@@ -1338,6 +1266,223 @@ export default function SalesOrderDetail() {
           )}
         </CardContent>
       </Card>
+      {/* Hidden thermal receipt — only revealed by @media print */}
+      <SalesOrderThermalReceipt orderDetail={orderDetail} />
     </div>
+  );
+}
+
+function formatSOReceiptDateTime(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  let h = d.getHours();
+  const ampm = h >= 12 ? "pm" : "am";
+  h = h % 12 || 12;
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}, ${pad(h)}.${pad(d.getMinutes())} ${ampm}`;
+}
+
+function SalesOrderThermalReceipt({
+  orderDetail,
+}: {
+  orderDetail: { order: Record<string, unknown>; lines: Record<string, unknown>[] } | null | undefined;
+}) {
+  const { data: org } = useGetCurrentOrganization();
+  const { data: me } = useGetMe();
+  const orgAny = org as unknown as Record<string, string | null | undefined> | undefined;
+  const { src: logoSrc } = useImageSrc(orgAny?.thermalLogoUrl ?? org?.logoUrl);
+
+  if (!orderDetail) return null;
+
+  const { order, lines } = orderDetail as {
+    order: {
+      orderNumber: string;
+      customerName?: string | null;
+      taxTotal: string | number;
+      total: string | number;
+      subtotal: string | number;
+      discountTotal?: string | number | null;
+    };
+    lines: {
+      itemName: string;
+      sku: string;
+      quantity: string | number;
+      unitPrice: string | number;
+      discountAmount?: string | number | null;
+    }[];
+  };
+
+  const cashier = me?.user?.name || me?.user?.email || "";
+  const addressParts = [
+    org?.addressLine1,
+    org?.addressLine2,
+    [org?.city, org?.state, org?.postalCode].filter(Boolean).join(" "),
+    org?.country,
+  ].filter((p): p is string => !!p && p.trim().length > 0);
+
+  const totalQty = lines.reduce((s, l) => s + Number(l.quantity), 0);
+  const lineData = lines.map((l) => {
+    const qty = Number(l.quantity);
+    const price = Number(l.unitPrice);
+    const gross = qty * price;
+    const disc = Number(l.discountAmount ?? 0);
+    return { ...l, qty, price, gross, disc };
+  });
+
+  const tax = Number(order.taxTotal);
+  const total = Number(order.total);
+  const subtotal = Number(order.subtotal);
+  const discTotal = Number(order.discountTotal ?? 0);
+
+  return (
+    <>
+      <style>{`
+        @media print {
+          body * { visibility: hidden !important; }
+          #_so_thermal_, #_so_thermal_ * { visibility: visible !important; }
+          #_so_thermal_ {
+            display: block !important;
+            position: absolute !important;
+            left: 0; top: 0;
+            width: 72mm;
+            padding: 3mm 4mm;
+            font-family: Georgia, 'Times New Roman', serif;
+            font-size: 9pt;
+            line-height: 1.35;
+            color: #000;
+            background: #fff;
+          }
+          @page { size: 72mm auto; margin: 0; }
+        }
+        #_so_thermal_ { display: none; }
+        #_so_thermal_ .center { text-align: center; }
+        #_so_thermal_ .bold { font-weight: 700; }
+        #_so_thermal_ .small { font-size: 8pt; }
+        #_so_thermal_ .xs { font-size: 7pt; }
+        #_so_thermal_ .logo {
+          max-width: 38mm; max-height: 20mm; object-fit: contain;
+          display: inline-block; margin-bottom: 1mm;
+        }
+        #_so_thermal_ .biz-name {
+          font-size: 15pt; font-weight: 700; letter-spacing: 0.3px; margin-top: 1mm;
+        }
+        #_so_thermal_ .title {
+          font-size: 11pt; font-weight: 700; margin: 1.5mm 0 0.5mm;
+        }
+        #_so_thermal_ .sep { border-top: 1px dashed #000; margin: 1.5mm 0; }
+        #_so_thermal_ .kv { display: flex; gap: 2mm; }
+        #_so_thermal_ .kv > span:first-child { width: 28mm; flex-shrink: 0; }
+        #_so_thermal_ table { width: 100%; border-collapse: collapse; }
+        #_so_thermal_ th, #_so_thermal_ td {
+          text-align: left; padding: 0.6mm 0; vertical-align: top;
+        }
+        #_so_thermal_ th.r, #_so_thermal_ td.r { text-align: right; padding-left: 3mm; }
+        #_so_thermal_ thead th { border-bottom: 1px solid #000; }
+        #_so_thermal_ tfoot td { padding-top: 1mm; }
+        #_so_thermal_ .total-row td {
+          border-top: 1px solid #000; font-size: 11.5pt; font-weight: 700; padding-top: 1mm;
+        }
+        #_so_thermal_ .disc-row td { font-size: 8pt; color: #444; }
+        #_so_thermal_ .footer-web {
+          font-weight: 700; font-size: 11pt; margin-top: 1mm;
+        }
+      `}</style>
+      <div id="_so_thermal_">
+        {logoSrc && (
+          <div className="center">
+            <img src={logoSrc} alt="" className="logo" />
+          </div>
+        )}
+        {org?.name && <div className="center biz-name">{org.name}</div>}
+        {addressParts.map((p, i) => (
+          <div className="center small" key={i}>{p}</div>
+        ))}
+        {org?.gstNumber && (
+          <div className="center small">GSTIN : {org.gstNumber}</div>
+        )}
+        <div className="center title">Retail Invoice</div>
+        <div className="sep" />
+        <div className="kv">
+          <span>Date</span>
+          <span>: {formatSOReceiptDateTime(new Date())}</span>
+        </div>
+        <div className="kv">
+          <span>Bill No</span>
+          <span>: {order.orderNumber}</span>
+        </div>
+        {cashier && (
+          <div className="kv">
+            <span>Cashier</span>
+            <span>: {cashier}</span>
+          </div>
+        )}
+        {order.customerName && order.customerName !== "Walk-in Customer" && (
+          <div className="kv bold">
+            <span>Customer</span>
+            <span>: {order.customerName}</span>
+          </div>
+        )}
+        <div className="sep" />
+        <table>
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th className="r">Qty</th>
+              <th className="r">Price</th>
+              <th className="r">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lineData.map((l, i) => (
+              <>
+                <tr key={i}>
+                  <td>
+                    {l.itemName}
+                    <div className="xs">{l.sku}</div>
+                  </td>
+                  <td className="r">{l.qty}</td>
+                  <td className="r">{l.price.toFixed(2)}</td>
+                  <td className="r">{l.gross.toFixed(2)}</td>
+                </tr>
+                {l.disc > 0 && (
+                  <tr key={`${i}-disc`} className="disc-row">
+                    <td colSpan={3} style={{ paddingLeft: "3mm" }}>(-) Item Discount</td>
+                    <td className="r">-{l.disc.toFixed(2)}</td>
+                  </tr>
+                )}
+              </>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td className="bold">Sub Total</td>
+              <td className="r bold">{totalQty}</td>
+              <td />
+              <td className="r bold">{subtotal.toFixed(2)}</td>
+            </tr>
+            {discTotal > 0 && (
+              <tr>
+                <td colSpan={3}>(-) Order Discount</td>
+                <td className="r">-{discTotal.toFixed(2)}</td>
+              </tr>
+            )}
+            {tax > 0 && (
+              <tr>
+                <td colSpan={3}>Tax</td>
+                <td className="r">{tax.toFixed(2)}</td>
+              </tr>
+            )}
+            <tr className="total-row">
+              <td colSpan={3}>TOTAL</td>
+              <td className="r">RS {total.toFixed(2)}</td>
+            </tr>
+          </tfoot>
+        </table>
+        <div className="sep" />
+        {org?.invoiceFooter && (
+          <div className="center footer-web">{org.invoiceFooter}</div>
+        )}
+        <div className="center small">Thank you for your purchase</div>
+        <div className="center xs">This is a Computer Generated Invoice</div>
+      </div>
+    </>
   );
 }

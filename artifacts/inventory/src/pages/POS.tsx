@@ -1141,7 +1141,8 @@ function ThermalReceipt({ receipt }: { receipt: PosCheckoutResult | null }) {
   const r = receipt as ThermalReceiptData | null;
   const { data: org } = useGetCurrentOrganization();
   const { data: me } = useGetMe();
-  const { src: logoSrc } = useImageSrc(org?.logoUrl);
+  const orgAny = org as unknown as Record<string, string | null | undefined> | undefined;
+  const { src: logoSrc } = useImageSrc(orgAny?.thermalLogoUrl ?? org?.logoUrl);
 
   const lines = r?._lines ?? [];
   const totalQty = lines.reduce((s, l) => s + l.quantity, 0);
@@ -1218,7 +1219,7 @@ function ThermalReceipt({ receipt }: { receipt: PosCheckoutResult | null }) {
         #pos-thermal-receipt th, #pos-thermal-receipt td {
           text-align: left; padding: 0.6mm 0; vertical-align: top;
         }
-        #pos-thermal-receipt th.r, #pos-thermal-receipt td.r { text-align: right; }
+        #pos-thermal-receipt th.r, #pos-thermal-receipt td.r { text-align: right; padding-left: 3mm; }
         #pos-thermal-receipt thead th { border-bottom: 1px solid #000; }
         #pos-thermal-receipt tfoot td { padding-top: 1mm; }
         #pos-thermal-receipt .total-row td {
