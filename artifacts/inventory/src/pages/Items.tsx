@@ -47,7 +47,6 @@ import {
   ChevronDown,
   Upload,
   ScanLine,
-  Store,
   SlidersHorizontal,
   ChevronLeft,
   X,
@@ -260,7 +259,6 @@ function variantLabel(opts: Item["variantOptions"]): string {
     .join(" / ");
 }
 
-const WAREHOUSE_FILTER_KEY = "items.warehouseFilter";
 
 /**
  * Render the Warehouse cell for an item row. When a specific warehouse
@@ -354,51 +352,20 @@ export default function Items() {
 
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 500);
-  // Warehouse picker — defaults to "all warehouses" but the last
-  // selection is remembered across navigation via localStorage so a
-  // multi-warehouse user doesn't have to re-pick on every visit.
-  const [warehouseFilter, setWarehouseFilterState] = useState<number | "all">(
-    () => {
-      if (typeof window === "undefined") return "all";
-      const raw = window.localStorage.getItem(WAREHOUSE_FILTER_KEY);
-      if (!raw || raw === "all") return "all";
-      const n = Number(raw);
-      return Number.isFinite(n) && Number.isInteger(n) && n > 0 ? n : "all";
-    },
-  );
-  const setWarehouseFilter = (v: number | "all") => {
-    setWarehouseFilterState(v);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(
-        WAREHOUSE_FILTER_KEY,
-        v === "all" ? "all" : String(v),
-      );
-    }
-  };
+  // Always show items from all warehouses — no warehouse filter UI.
+  const warehouseFilter = "all" as const;
   const { data: warehouses } = useListWarehouses();
   const visibleWarehouses = useMemo(
     () => (warehouses ?? []).filter((w) => !w.isVirtual),
     [warehouses],
   );
-  // If the saved warehouseId no longer exists (deleted, or hidden),
-  // silently fall back to "all" instead of sending an invalid filter.
-  useEffect(() => {
-    if (warehouseFilter === "all" || !warehouses) return;
-    if (!visibleWarehouses.some((w) => w.id === warehouseFilter)) {
-      setWarehouseFilter("all");
-    }
-  }, [warehouseFilter, warehouses, visibleWarehouses]);
   // Fetch every row (parents + variants) in a single query so we can
   // group them client-side without a per-row fetch.
   const { data: items, isLoading } = useListItems({
     search: debouncedSearch || undefined,
     includeWarehouseBreakdown: true,
-    ...(warehouseFilter !== "all" ? { warehouseId: warehouseFilter } : {}),
   });
-  const scopedWarehouseName =
-    warehouseFilter === "all"
-      ? null
-      : visibleWarehouses.find((w) => w.id === warehouseFilter)?.name ?? null;
+  const scopedWarehouseName = null;
   // Build dropdown sources for category + unit fields. Categories are
   // pulled from existing items so each org sees its own list, and the
   // unit list seeds the common UoMs plus any custom unit already in
@@ -1130,30 +1097,6 @@ export default function Items() {
             rows={exportRows}
             hidePdf
           />
-          <Store className="h-4 w-4 text-muted-foreground" />
-          <Select
-            value={
-              warehouseFilter === "all" ? "all" : warehouseFilter.toString()
-            }
-            onValueChange={(val) =>
-              setWarehouseFilter(val === "all" ? "all" : parseInt(val, 10))
-            }
-          >
-            <SelectTrigger
-              className="w-48"
-              data-testid="select-items-warehouse"
-            >
-              <SelectValue placeholder="All warehouses" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItemUI value="all">All warehouses</SelectItemUI>
-              {visibleWarehouses.map((w) => (
-                <SelectItemUI key={w.id} value={w.id.toString()}>
-                  {w.name}
-                </SelectItemUI>
-              ))}
-            </SelectContent>
-          </Select>
         </div>
       </div>
 

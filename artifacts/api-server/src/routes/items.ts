@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, eq, ilike, or, sql, asc, inArray } from "drizzle-orm";
+import { and, eq, ilike, or, sql, asc, desc, inArray } from "drizzle-orm";
 import {
   db,
   itemsTable,
@@ -134,7 +134,7 @@ router.get("/items", async (req, res, next) => {
       .select()
       .from(itemsTable)
       .where(and(...conds))
-      .orderBy(asc(itemsTable.name));
+      .orderBy(desc(itemsTable.createdAt));
     const itemIds = rows.map((r) => r.id);
     const stockMap = await totalStockFor(t.organizationId, itemIds);
     const parentIds = rows
