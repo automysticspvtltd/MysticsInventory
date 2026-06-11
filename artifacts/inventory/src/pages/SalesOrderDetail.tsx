@@ -1449,15 +1449,6 @@ function SalesOrderThermalReceipt({
             <span>: {customerPhone}</span>
           </div>
         )}
-        {(payments ?? []).length > 0 && (
-          <div className="kv small">
-            <span>Mode</span>
-            <span>
-              :{" "}
-              {[...new Set((payments ?? []).map((p) => SO_PAYMENT_LABELS[p.mode ?? ""] ?? (p.mode ?? "Payment")))].join(" + ")}
-            </span>
-          </div>
-        )}
         {order.saleChannel && order.saleChannel !== "pos" && (
           <div className="kv small">
             <span>Channel</span>
