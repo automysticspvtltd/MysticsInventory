@@ -14,7 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatDate } from "@/lib/format";
-import { Plus, ArrowRight, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, ArrowRight, ChevronLeft, ChevronRight, Upload } from "lucide-react";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
   Select,
@@ -26,9 +26,20 @@ import {
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-
+import { ReportExportButton, type ExportColumn } from "@/components/ReportExportButton";
+import { BulkImportStockTransferDialog } from "@/components/BulkImportStockTransferDialog";
+import type { StockTransfer } from "@workspace/api-client-react";
 
 const ITEMS_PER_PAGE = 15;
+
+const EXPORT_COLUMNS: ExportColumn<StockTransfer>[] = [
+  { header: "Transfer #", accessor: (r) => r.transferNumber },
+  { header: "Date", accessor: (r) => r.transferDate },
+  { header: "From Warehouse", accessor: (r) => r.fromWarehouseName },
+  { header: "To Warehouse", accessor: (r) => r.toWarehouseName },
+  { header: "Status", accessor: (r) => r.status },
+  { header: "Notes", accessor: (r) => r.notes ?? "" },
+];
 
 export default function StockTransfers() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -36,6 +47,7 @@ export default function StockTransfers() {
   const [fromDate, setFromDate] = useState<string>("");
   const [toDate, setToDate] = useState<string>("");
   const [page, setPage] = useState(1);
+  const [importOpen, setImportOpen] = useState(false);
 
   useEffect(() => setPage(1), [statusFilter, warehouseFilter, fromDate, toDate]);
 
@@ -56,12 +68,30 @@ export default function StockTransfers() {
         title="Stock Transfers"
         description="Move inventory between your warehouses."
         actions={
-          <Button asChild data-testid="btn-create-transfer">
-            <Link href="/transfers/new">
-              <Plus className="mr-2 h-4 w-4" />
-              New Transfer
-            </Link>
-          </Button>
+          <div className="flex items-center gap-2">
+            <ReportExportButton
+              filename="stock-transfers"
+              title="Stock Transfers"
+              columns={EXPORT_COLUMNS}
+              rows={transfers ?? []}
+              hidePdf
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setImportOpen(true)}
+              data-testid="btn-import-transfers"
+            >
+              <Upload className="h-4 w-4 mr-2" />
+              Import
+            </Button>
+            <Button asChild data-testid="btn-create-transfer">
+              <Link href="/transfers/new">
+                <Plus className="mr-2 h-4 w-4" />
+                New Transfer
+              </Link>
+            </Button>
+          </div>
         }
       />
 
@@ -201,6 +231,11 @@ export default function StockTransfers() {
           </div>
         </div>
       )}
+
+      <BulkImportStockTransferDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+      />
     </div>
   );
 }

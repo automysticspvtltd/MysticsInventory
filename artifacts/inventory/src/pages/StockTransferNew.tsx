@@ -26,17 +26,19 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { useForm, useFieldArray } from "react-hook-form";
+import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { useLocation, Link } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
-import { Trash2, Plus, ArrowLeft, ScanLine } from "lucide-react";
+import { Trash2, Plus, ArrowLeft, ScanLine, AlertTriangle } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { ItemPicker } from "@/components/ItemPicker";
 import { useState } from "react";
+import type { Control } from "react-hook-form";
+import type { Item } from "@workspace/api-client-react";
 
 const lineSchema = z.object({
   itemId: z.coerce.number().min(1, "Item required"),
@@ -59,6 +61,32 @@ const schema = z
   });
 
 type FormValues = z.infer<typeof schema>;
+
+interface StockWarningProps {
+  index: number;
+  control: Control<FormValues>;
+  items: Item[] | undefined;
+}
+
+function LineStockWarning({ index, control, items }: StockWarningProps) {
+  const itemId = useWatch({ control, name: `lines.${index}.itemId` });
+  const quantity = useWatch({ control, name: `lines.${index}.quantity` });
+
+  if (!itemId || !items) return null;
+  const item = items.find((i) => i.id === Number(itemId));
+  if (!item || item.stockAtWarehouse == null) return null;
+
+  const qty = Number(quantity);
+  const available = Number(item.stockAtWarehouse);
+  if (!Number.isFinite(qty) || qty <= available) return null;
+
+  return (
+    <p className="text-xs text-amber-600 flex items-center gap-1 mt-1">
+      <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+      Only {available} in stock at source — dispatch will fail if unchanged
+    </p>
+  );
+}
 
 export default function StockTransferNew() {
   const [, setLocation] = useLocation();
@@ -359,6 +387,11 @@ export default function StockTransferNew() {
                               <FormMessage />
                             </FormItem>
                           )}
+                        />
+                        <LineStockWarning
+                          index={index}
+                          control={form.control}
+                          items={items}
                         />
                       </div>
                     </div>
