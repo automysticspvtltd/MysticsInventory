@@ -117,6 +117,7 @@ async function loadDetail(orgId: number, orderId: number) {
     .select({
       order: salesOrdersTable,
       customerName: customersTable.name,
+      customerPhone: customersTable.phone,
       customerGstNumber: customersTable.gstNumber,
       warehouseName: warehousesTable.name,
     })
@@ -152,6 +153,7 @@ async function loadDetail(orgId: number, orderId: number) {
       orderRows[0].customerGstNumber,
       discountTotal,
     ),
+    customerPhone: orderRows[0].customerPhone ?? null,
     lines: lineRows.map((r) =>
       serializeOrderLine(
         r.line,

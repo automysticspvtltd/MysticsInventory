@@ -40,7 +40,7 @@ import {
   Receipt,
   Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { RecordPaymentDialog } from "@/components/RecordPaymentDialog";
 import { EwbPanel } from "@/components/EwbPanel";
 import { EinvoicePanel } from "@/components/EinvoicePanel";
@@ -1280,27 +1280,57 @@ function formatSOReceiptDateTime(d: Date): string {
   return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}, ${pad(h)}.${pad(d.getMinutes())} ${ampm}`;
 }
 
+const SO_CHANNEL_LABELS: Record<string, string> = {
+  pos: "POS",
+  walkin: "Walk-in",
+  website: "Website",
+  store: "Store",
+  whatsapp: "WhatsApp",
+  phone: "Phone",
+  instagram: "Instagram",
+  other: "Other",
+};
+const SO_PAYMENT_LABELS: Record<string, string> = {
+  cash: "Cash",
+  upi: "UPI",
+  card: "Card",
+  bank: "Bank Transfer",
+  razorpay: "Razorpay",
+};
+
 function SalesOrderThermalReceipt({
   orderDetail,
 }: {
-  orderDetail: { order: Record<string, unknown>; lines: Record<string, unknown>[] } | null | undefined;
+  orderDetail: {
+    order: Record<string, unknown>;
+    customerPhone?: string | null;
+    lines: Record<string, unknown>[];
+  } | null | undefined;
 }) {
   const { data: org } = useGetCurrentOrganization();
   const { data: me } = useGetMe();
   const orgAny = org as unknown as Record<string, string | null | undefined> | undefined;
   const { src: logoSrc } = useImageSrc(orgAny?.thermalLogoUrl ?? org?.logoUrl);
+  const orderId = orderDetail ? Number((orderDetail.order as Record<string, unknown>).id) : 0;
+  const { data: payments } = useListCustomerPayments(
+    { salesOrderId: orderId },
+    { query: { enabled: !!orderId } },
+  );
 
   if (!orderDetail) return null;
 
-  const { order, lines } = orderDetail as {
+  const { order, lines, customerPhone } = orderDetail as {
     order: {
+      id: number;
       orderNumber: string;
       customerName?: string | null;
+      saleChannel?: string | null;
       taxTotal: string | number;
       total: string | number;
       subtotal: string | number;
       discountTotal?: string | number | null;
     };
+    customerPhone?: string | null;
     lines: {
       itemName: string;
       sku: string;
@@ -1331,6 +1361,8 @@ function SalesOrderThermalReceipt({
   const total = Number(order.total);
   const subtotal = Number(order.subtotal);
   const discTotal = Number(order.discountTotal ?? 0);
+  const totalPaid = (payments ?? []).reduce((s, p) => s + Number(p.amount), 0);
+  const balanceDue = Math.max(0, total - totalPaid);
 
   return (
     <>
@@ -1414,10 +1446,22 @@ function SalesOrderThermalReceipt({
             <span>: {cashier}</span>
           </div>
         )}
-        {order.customerName && order.customerName !== "Walk-in Customer" && (
+        {order.customerName && (
           <div className="kv bold">
             <span>Customer</span>
             <span>: {order.customerName}</span>
+          </div>
+        )}
+        {customerPhone && (
+          <div className="kv bold">
+            <span>Phone</span>
+            <span>: {customerPhone}</span>
+          </div>
+        )}
+        {order.saleChannel && (
+          <div className="kv small">
+            <span>Mode</span>
+            <span>: {SO_CHANNEL_LABELS[order.saleChannel] ?? order.saleChannel}</span>
           </div>
         )}
         <div className="sep" />
@@ -1432,8 +1476,8 @@ function SalesOrderThermalReceipt({
           </thead>
           <tbody>
             {lineData.map((l, i) => (
-              <>
-                <tr key={i}>
+              <Fragment key={i}>
+                <tr>
                   <td>
                     {l.itemName}
                     <div className="xs">{l.sku}</div>
@@ -1443,12 +1487,12 @@ function SalesOrderThermalReceipt({
                   <td className="r">{l.gross.toFixed(2)}</td>
                 </tr>
                 {l.disc > 0 && (
-                  <tr key={`${i}-disc`} className="disc-row">
+                  <tr className="disc-row">
                     <td colSpan={3} style={{ paddingLeft: "3mm" }}>(-) Item Discount</td>
                     <td className="r">-{l.disc.toFixed(2)}</td>
                   </tr>
                 )}
-              </>
+              </Fragment>
             ))}
           </tbody>
           <tfoot>
@@ -1474,6 +1518,18 @@ function SalesOrderThermalReceipt({
               <td colSpan={3}>TOTAL</td>
               <td className="r">RS {total.toFixed(2)}</td>
             </tr>
+            {(payments ?? []).length > 0 && (payments ?? []).map((p, i) => (
+              <tr key={i}>
+                <td colSpan={3}>{SO_PAYMENT_LABELS[p.mode ?? ""] ?? (p.mode ?? "Payment")}</td>
+                <td className="r">{Number(p.amount).toFixed(2)}</td>
+              </tr>
+            ))}
+            {balanceDue > 0 && (
+              <tr>
+                <td colSpan={3}>Balance Due</td>
+                <td className="r">{balanceDue.toFixed(2)}</td>
+              </tr>
+            )}
           </tfoot>
         </table>
         <div className="sep" />
