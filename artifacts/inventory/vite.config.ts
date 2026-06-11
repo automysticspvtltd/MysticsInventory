@@ -51,27 +51,7 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
-    rollupOptions: {
-      output: {
-        manualChunks: (id) => {
-          if (id.includes("node_modules/@clerk")) return "clerk";
-          if (id.includes("node_modules/recharts") || id.includes("node_modules/d3-")) return "charts";
-          // React, Radix UI, and lucide must share one chunk: Radix calls
-          // React.forwardRef at module-init time, and CJS→ESM wrapping across
-          // chunk boundaries can leave the React export undefined at that point.
-          if (
-            id.includes("node_modules/react-dom") ||
-            id.includes("node_modules/react/") ||
-            id.includes("node_modules/scheduler") ||
-            id.includes("node_modules/wouter") ||
-            id.includes("node_modules/@radix-ui") ||
-            id.includes("node_modules/lucide-react")
-          ) return "react-ui";
-          if (id.includes("node_modules/@tanstack")) return "query";
-          if (id.includes("node_modules/")) return "vendor";
-        },
-      },
-    },
+    rollupOptions: {},
   },
   server: {
     port,
