@@ -220,6 +220,7 @@ export function serializeStockMovement(
 // Returns the canonical lower-cased channel id (e.g. "walkin",
 // "website", …) so callers can render their own label.
 const SALE_CHANNEL_LABEL_TO_ID: Record<string, string> = {
+  pos: "pos",
   "walk-in": "walkin",
   walkin: "walkin",
   website: "website",

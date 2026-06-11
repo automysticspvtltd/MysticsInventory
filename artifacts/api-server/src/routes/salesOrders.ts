@@ -153,7 +153,12 @@ async function loadDetail(orgId: number, orderId: number) {
       orderRows[0].customerGstNumber,
       discountTotal,
     ),
-    customerPhone: orderRows[0].customerPhone ?? null,
+    customerPhone: (() => {
+      if (orderRows[0].customerPhone) return orderRows[0].customerPhone;
+      const notes = orderRows[0].order.notes ?? "";
+      const m = notes.match(/Walk-in:[^(]*\((\d{5,15})\)/) ?? notes.match(/Walk-in:\s*(\d{5,15})\b/);
+      return m ? m[1] : null;
+    })(),
     lines: lineRows.map((r) =>
       serializeOrderLine(
         r.line,
