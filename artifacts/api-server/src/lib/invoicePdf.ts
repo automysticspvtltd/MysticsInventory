@@ -359,6 +359,10 @@ export async function renderInvoicePdf(
   };
 
   const orderDiscount = toNum(order.orderDiscount ?? 0);
+  const totalLineDiscount = computed.reduce(
+    (s, l) => s + toNum(l.src.discountAmount ?? 0),
+    0,
+  );
   const PAYMENT_LABELS: Record<string, string> = {
     cash: "Cash",
     upi: "UPI",
@@ -368,9 +372,13 @@ export async function renderInvoicePdf(
     other: "Other",
   };
 
+  if (totalLineDiscount > 0.005) {
+    total_("Gross Total", fmtMoney(subtotal + totalLineDiscount));
+    total_("(-) Item Discounts", fmtMoney(totalLineDiscount), { muted: true });
+  }
   total_("Subtotal", fmtMoney(subtotal));
   if (orderDiscount > 0.005) {
-    total_("(-) Discount", fmtMoney(orderDiscount), { muted: true });
+    total_("(-) Order Discount", fmtMoney(orderDiscount), { muted: true });
   }
   if (intra) {
     total_("CGST", fmtMoney(computed.reduce((s, l) => s + l.cgst, 0)));
