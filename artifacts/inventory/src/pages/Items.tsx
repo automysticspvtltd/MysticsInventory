@@ -47,6 +47,7 @@ import {
   ChevronDown,
   Upload,
   ScanLine,
+  Store,
   SlidersHorizontal,
   ChevronLeft,
   X,
@@ -260,6 +261,8 @@ function variantLabel(opts: Item["variantOptions"]): string {
 }
 
 
+const WAREHOUSE_FILTER_KEY = "items.warehouseFilter";
+
 /**
  * Render the Warehouse cell for an item row. When a specific warehouse
  * is picked the cell just shows that warehouse's name; under the "all
@@ -352,20 +355,48 @@ export default function Items() {
 
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 500);
-  // Always show items from all warehouses — no warehouse filter UI.
-  const warehouseFilter = "all" as const;
+  // Warehouse filter — last selection remembered in localStorage.
+  const [warehouseFilter, setWarehouseFilterState] = useState<number | "all">(
+    () => {
+      if (typeof window === "undefined") return "all";
+      const raw = window.localStorage.getItem(WAREHOUSE_FILTER_KEY);
+      if (!raw || raw === "all") return "all";
+      const n = Number(raw);
+      return Number.isFinite(n) && Number.isInteger(n) && n > 0 ? n : "all";
+    },
+  );
+  const setWarehouseFilter = (v: number | "all") => {
+    setWarehouseFilterState(v);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        WAREHOUSE_FILTER_KEY,
+        v === "all" ? "all" : String(v),
+      );
+    }
+  };
   const { data: warehouses } = useListWarehouses();
   const visibleWarehouses = useMemo(
     () => (warehouses ?? []).filter((w) => !w.isVirtual),
     [warehouses],
   );
+  // If the saved warehouseId no longer exists (deleted/hidden), fall back to "all".
+  useEffect(() => {
+    if (warehouseFilter === "all" || !warehouses) return;
+    if (!visibleWarehouses.some((w) => w.id === warehouseFilter)) {
+      setWarehouseFilter("all");
+    }
+  }, [warehouseFilter, warehouses, visibleWarehouses]);
   // Fetch every row (parents + variants) in a single query so we can
   // group them client-side without a per-row fetch.
   const { data: items, isLoading } = useListItems({
     search: debouncedSearch || undefined,
     includeWarehouseBreakdown: true,
+    ...(warehouseFilter !== "all" ? { warehouseId: warehouseFilter } : {}),
   });
-  const scopedWarehouseName = null;
+  const scopedWarehouseName =
+    warehouseFilter === "all"
+      ? null
+      : visibleWarehouses.find((w) => w.id === warehouseFilter)?.name ?? null;
   // Build dropdown sources for category + unit fields. Categories are
   // pulled from existing items so each org sees its own list, and the
   // unit list seeds the common UoMs plus any custom unit already in
@@ -1053,6 +1084,27 @@ export default function Items() {
             ))}
           </SelectContent>
         </Select>
+        {visibleWarehouses.length > 1 && (
+          <Select
+            value={warehouseFilter === "all" ? "all" : String(warehouseFilter)}
+            onValueChange={(v) =>
+              setWarehouseFilter(v === "all" ? "all" : Number(v))
+            }
+          >
+            <SelectTrigger className="w-44" data-testid="select-items-warehouse">
+              <Store className="h-4 w-4 mr-1 text-muted-foreground shrink-0" />
+              <SelectValue placeholder="All warehouses" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItemUI value="all">All warehouses</SelectItemUI>
+              {visibleWarehouses.map((w) => (
+                <SelectItemUI key={w.id} value={String(w.id)}>
+                  {w.name}
+                </SelectItemUI>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         <Button
           variant={advancedOpen || hasAdvancedFilters ? "secondary" : "outline"}
           size="sm"
