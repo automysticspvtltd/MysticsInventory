@@ -413,7 +413,6 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
         continue;
       }
       if (
-        existing.hasVariants ||
         existing.isBundle ||
         existing.parentItemId != null ||
         existing.trackBatches
@@ -421,8 +420,11 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
         results[ri] = {
           ...results[ri],
           action: "error",
-          error:
-            "Existing item is a variant, bundle, or batch-tracked — edit it individually.",
+          error: existing.isBundle
+            ? "Existing item is a bundle — edit it individually."
+            : existing.parentItemId != null
+            ? "Existing item is a variant child — use a variant row (with Parent Item filled) to update it."
+            : "Existing item is batch-tracked — edit it individually.",
         };
         simpleParsed[j] = null;
         continue;
@@ -533,10 +535,11 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
     const variantCandidateSkus = variantParsed
       .filter((p): p is VariantParsed => p !== null)
       .map((p) => p.sku);
-    const existingVariantSet = new Set<string>();
+    // Map of sku → existing item id for variants already in the DB.
+    const existingVariantMap = new Map<string, number>();
     if (variantCandidateSkus.length > 0) {
       const existing = await db
-        .select({ sku: itemsTable.sku })
+        .select({ sku: itemsTable.sku, id: itemsTable.id })
         .from(itemsTable)
         .where(
           and(
@@ -545,7 +548,7 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
             sql`${itemsTable.archivedAt} IS NULL`,
           ),
         );
-      for (const e of existing) existingVariantSet.add(e.sku);
+      for (const e of existing) existingVariantMap.set(e.sku, e.id);
     }
     for (let j = 0; j < variantParsed.length; j++) {
       const p = variantParsed[j];
@@ -579,13 +582,10 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
         variantParsed[j] = null;
         continue;
       }
-      if (existingVariantSet.has(p.sku)) {
-        results[ri] = {
-          ...results[ri],
-          action: "skip",
-          error: "SKU already exists — skipped",
-        };
-        variantParsed[j] = null;
+      if (existingVariantMap.has(p.sku)) {
+        // In upsert mode: update the existing variant's price and stock.
+        results[ri] = { ...results[ri], action: "update" };
+        // Keep variantParsed[j] non-null so the commit loop can update it.
       }
     }
 
@@ -696,6 +696,13 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
         if (!p || results[simpleResultIdx[j]].action !== "update" || p.totalStock === null) continue;
         const e = existingSimpleMap.get(p.sku);
         if (e) ids.push(e.id);
+      }
+      // Also include variant update rows that set totalStock.
+      for (let j = 0; j < variantParsed.length; j++) {
+        const p = variantParsed[j];
+        if (!p || results[variantResultIdx[j]].action !== "update" || p.totalStock === null) continue;
+        const vid = existingVariantMap.get(p.sku);
+        if (vid !== undefined) ids.push(vid);
       }
       if (ids.length > 0) {
         const rows = await db
@@ -887,71 +894,160 @@ router.post("/items/unified-bulk-import", async (req, res, next) => {
           for (let j = 0; j < variantParsed.length; j++) {
             const p = variantParsed[j];
             if (!p) continue;
+            const vri = variantResultIdx[j];
+            const variantAction = results[vri].action;
             const parent = parentMap.get(p.parentSku)!;
-            if (parent.id === -1) {
-              // Intra-file parent wasn't committed (e.g. barcode conflict).
-              results[variantResultIdx[j]] = {
-                ...results[variantResultIdx[j]],
-                action: "skip",
-                error: `Parent "${p.parentSku}" could not be created`,
-              };
-              continue;
-            }
-            const { axes } = parent;
-            const opts: Record<string, string> = {};
-            if (axes[0] && p.attr1) opts[axes[0]] = p.attr1;
-            if (axes[1] && p.attr2) opts[axes[1]] = p.attr2;
-            if (axes[2] && p.attr3) opts[axes[2]] = p.attr3;
-            const attrLabel = [p.attr1, p.attr2, p.attr3]
-              .filter(Boolean)
-              .join(" - ");
-            const name =
-              p.variantName ||
-              `${parent.name}${attrLabel ? ` - ${attrLabel}` : ""}`;
-            let bc: string | null = p.barcode;
-            let bcSrc: "manual" | "auto" = "manual";
-            if (bc === null) {
-              bc = await generateUniqueBarcode(t.organizationId, tx);
-              bcSrc = "auto";
-            }
-            const [created] = await tx
-              .insert(itemsTable)
-              .values({
-                organizationId: t.organizationId,
-                sku: p.sku,
-                name,
-                parentItemId: parent.id,
-                variantOptions: opts,
-                barcode: bc,
-                barcodeSource: bcSrc,
-                salePrice: toStr(p.salePrice),
-                purchasePrice: toStr(p.purchasePrice),
-                unit: parent.unit,
-                category: parent.category,
-                hsnCode: parent.hsnCode,
-                taxRate: parent.taxRate ?? "0",
-              })
-              .returning({ id: itemsTable.id });
-            const variantWhId = resolveWarehouseId(p.warehouseName);
-            if (
-              p.totalStock !== null &&
-              p.totalStock > 0 &&
-              variantWhId !== null
-            ) {
-              await tx.insert(itemWarehouseStockTable).values({
-                organizationId: t.organizationId,
-                itemId: created.id,
-                warehouseId: variantWhId,
-                quantity: toStr(p.totalStock),
-              });
-              await tx.insert(stockMovementsTable).values({
-                organizationId: t.organizationId,
-                itemId: created.id,
-                warehouseId: variantWhId,
-                movementType: "adjustment",
-                quantity: toStr(p.totalStock),
-                notes: "Unified bulk import",
-              });
+
+            if (variantAction === "create") {
+              if (parent.id === -1) {
+                // Intra-file parent wasn't committed (e.g. barcode conflict).
+                results[vri] = {
+                  ...results[vri],
+                  action: "skip",
+                  error: `Parent "${p.parentSku}" could not be created`,
+                };
+                continue;
+              }
+              const { axes } = parent;
+              const opts: Record<string, string> = {};
+              if (axes[0] && p.attr1) opts[axes[0]] = p.attr1;
+              if (axes[1] && p.attr2) opts[axes[1]] = p.attr2;
+              if (axes[2] && p.attr3) opts[axes[2]] = p.attr3;
+              const attrLabel = [p.attr1, p.attr2, p.attr3]
+                .filter(Boolean)
+                .join(" - ");
+              const name =
+                p.variantName ||
+                `${parent.name}${attrLabel ? ` - ${attrLabel}` : ""}`;
+              let bc: string | null = p.barcode;
+              let bcSrc: "manual" | "auto" = "manual";
+              if (bc === null) {
+                bc = await generateUniqueBarcode(t.organizationId, tx);
+                bcSrc = "auto";
+              }
+              const [created] = await tx
+                .insert(itemsTable)
+                .values({
+                  organizationId: t.organizationId,
+                  sku: p.sku,
+                  name,
+                  parentItemId: parent.id,
+                  variantOptions: opts,
+                  barcode: bc,
+                  barcodeSource: bcSrc,
+                  salePrice: toStr(p.salePrice),
+                  purchasePrice: toStr(p.purchasePrice),
+                  unit: parent.unit,
+                  category: parent.category,
+                  hsnCode: parent.hsnCode,
+                  taxRate: parent.taxRate ?? "0",
+                })
+                .returning({ id: itemsTable.id });
+              const variantWhId = resolveWarehouseId(p.warehouseName);
+              if (
+                p.totalStock !== null &&
+                p.totalStock > 0 &&
+                variantWhId !== null
+              ) {
+                await tx.insert(itemWarehouseStockTable).values({
+                  organizationId: t.organizationId,
+                  itemId: created.id,
+                  warehouseId: variantWhId,
+                  quantity: toStr(p.totalStock),
+                });
+                await tx.insert(stockMovementsTable).values({
+                  organizationId: t.organizationId,
+                  itemId: created.id,
+                  warehouseId: variantWhId,
+                  movementType: "adjustment",
+                  quantity: toStr(p.totalStock),
+                  notes: "Unified bulk import",
+                });
+              }
+            } else if (variantAction === "update") {
+              const existingId = existingVariantMap.get(p.sku)!;
+              const barcodeFields =
+                p.barcode !== null
+                  ? { barcode: p.barcode, barcodeSource: "manual" as const }
+                  : {};
+              const attrLabel = [p.attr1, p.attr2, p.attr3]
+                .filter(Boolean)
+                .join(" - ");
+              const nameFields = p.variantName
+                ? { name: p.variantName }
+                : attrLabel
+                ? { name: `${parent.name}${` - ${attrLabel}`}` }
+                : {};
+              await tx
+                .update(itemsTable)
+                .set({
+                  salePrice: toStr(p.salePrice),
+                  purchasePrice: toStr(p.purchasePrice),
+                  ...barcodeFields,
+                  ...nameFields,
+                  updatedAt: new Date(),
+                })
+                .where(
+                  and(
+                    eq(itemsTable.id, existingId),
+                    eq(itemsTable.organizationId, t.organizationId),
+                  ),
+                );
+              // Stock adjustment delta
+              const updateWhId = resolveWarehouseId(p.warehouseName);
+              if (p.totalStock !== null && updateWhId !== null) {
+                const currentQty =
+                  preStockMap.get(`${existingId}:${updateWhId}`) ?? 0;
+                const delta = p.totalStock - currentQty;
+                if (delta !== 0) {
+                  const stockRows = await tx
+                    .select({ id: itemWarehouseStockTable.id })
+                    .from(itemWarehouseStockTable)
+                    .where(
+                      and(
+                        eq(
+                          itemWarehouseStockTable.organizationId,
+                          t.organizationId,
+                        ),
+                        eq(itemWarehouseStockTable.itemId, existingId),
+                        eq(itemWarehouseStockTable.warehouseId, updateWhId),
+                      ),
+                    )
+                    .limit(1);
+                  if (stockRows.length > 0) {
+                    await tx
+                      .update(itemWarehouseStockTable)
+                      .set({
+                        quantity: sql`quantity + ${toStr(delta)}::numeric`,
+                      })
+                      .where(
+                        and(
+                          eq(
+                            itemWarehouseStockTable.organizationId,
+                            t.organizationId,
+                          ),
+                          eq(itemWarehouseStockTable.itemId, existingId),
+                          eq(itemWarehouseStockTable.warehouseId, updateWhId),
+                        ),
+                      );
+                  } else {
+                    await tx.insert(itemWarehouseStockTable).values({
+                      organizationId: t.organizationId,
+                      itemId: existingId,
+                      warehouseId: updateWhId,
+                      quantity: toStr(p.totalStock),
+                    });
+                  }
+                  await tx.insert(stockMovementsTable).values({
+                    organizationId: t.organizationId,
+                    itemId: existingId,
+                    warehouseId: updateWhId,
+                    movementType: "adjustment",
+                    quantity: toStr(delta),
+                    notes: "Unified bulk import",
+                  });
+                }
+              }
             }
           }
         });
