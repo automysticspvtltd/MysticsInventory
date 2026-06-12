@@ -52,6 +52,7 @@ type ParsedRow = {
   quantity: number;
   itemId: number | null;
   itemName: string | null;
+  stockAtWarehouse: number | null;
   error: string | null;
 };
 
@@ -183,17 +184,29 @@ export function BulkImportStockTransferDialog({ open, onOpenChange }: Props) {
     }
     const rows: ParsedRow[] = extracted.map((r, i) => {
       if (!r.sku) {
-        return { rowIndex: i + 2, sku: r.sku, quantity: 0, itemId: null, itemName: null, error: "SKU is empty" };
+        return { rowIndex: i + 2, sku: r.sku, quantity: 0, itemId: null, itemName: null, stockAtWarehouse: null, error: "SKU is empty" };
       }
       const qty = Number(r.quantityRaw);
       if (!r.quantityRaw || !Number.isFinite(qty) || qty <= 0) {
-        return { rowIndex: i + 2, sku: r.sku, quantity: 0, itemId: null, itemName: null, error: "Quantity must be a positive number" };
+        return { rowIndex: i + 2, sku: r.sku, quantity: 0, itemId: null, itemName: null, stockAtWarehouse: null, error: "Quantity must be a positive number" };
       }
       const resolved = skuMap.get(r.sku.toLowerCase());
       if (!resolved) {
-        return { rowIndex: i + 2, sku: r.sku, quantity: qty, itemId: null, itemName: null, error: fromWarehouseId ? "SKU not found in source warehouse" : "SKU not found" };
+        return { rowIndex: i + 2, sku: r.sku, quantity: qty, itemId: null, itemName: null, stockAtWarehouse: null, error: fromWarehouseId ? "SKU not found in source warehouse" : "SKU not found" };
       }
-      return { rowIndex: i + 2, sku: r.sku, quantity: qty, itemId: resolved.id, itemName: resolved.name, error: null };
+      const available = resolved.stockAtWarehouse ?? 0;
+      if (available < qty) {
+        return {
+          rowIndex: i + 2,
+          sku: r.sku,
+          quantity: qty,
+          itemId: resolved.id,
+          itemName: resolved.name,
+          stockAtWarehouse: available,
+          error: `Insufficient stock: need ${qty}, available ${available}`,
+        };
+      }
+      return { rowIndex: i + 2, sku: r.sku, quantity: qty, itemId: resolved.id, itemName: resolved.name, stockAtWarehouse: available, error: null };
     });
     setParsedRows(rows);
     setStep("preview");
@@ -378,7 +391,8 @@ export function BulkImportStockTransferDialog({ open, onOpenChange }: Props) {
                     <th className="text-left px-3 py-2 font-medium text-xs text-muted-foreground">Row</th>
                     <th className="text-left px-3 py-2 font-medium text-xs text-muted-foreground">SKU</th>
                     <th className="text-left px-3 py-2 font-medium text-xs text-muted-foreground">Item</th>
-                    <th className="text-right px-3 py-2 font-medium text-xs text-muted-foreground">Qty</th>
+                    <th className="text-right px-3 py-2 font-medium text-xs text-muted-foreground">In Stock</th>
+                    <th className="text-right px-3 py-2 font-medium text-xs text-muted-foreground">Transfer Qty</th>
                     <th className="text-left px-3 py-2 font-medium text-xs text-muted-foreground">Status</th>
                   </tr>
                 </thead>
@@ -394,11 +408,20 @@ export function BulkImportStockTransferDialog({ open, onOpenChange }: Props) {
                       <td className="px-3 py-2 text-xs text-muted-foreground">{r.rowIndex}</td>
                       <td className="px-3 py-2 font-mono text-xs">{r.sku || <span className="text-muted-foreground italic">empty</span>}</td>
                       <td className="px-3 py-2 text-xs">{r.itemName ?? <span className="text-muted-foreground">—</span>}</td>
-                      <td className="px-3 py-2 text-xs text-right">{r.error ? "—" : r.quantity}</td>
+                      <td className="px-3 py-2 text-xs text-right">
+                        {r.stockAtWarehouse !== null ? (
+                          <span className={r.stockAtWarehouse === 0 ? "text-red-600 font-medium" : "text-muted-foreground"}>
+                            {r.stockAtWarehouse}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-right">{r.quantity > 0 ? r.quantity : "—"}</td>
                       <td className="px-3 py-2 text-xs">
                         {r.error ? (
                           <span className="text-red-600 flex items-center gap-1">
-                            <X className="h-3 w-3" />
+                            <X className="h-3 w-3 shrink-0" />
                             {r.error}
                           </span>
                         ) : (
